@@ -677,7 +677,7 @@ async def post_init(application: Application) -> None:
     ])
 
 
-def main() -> None:
+async def main_async() -> None:
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
         raise RuntimeError("Missing TELEGRAM_BOT_TOKEN in .env")
@@ -697,9 +697,37 @@ def main() -> None:
     app.add_handler(CommandHandler("timezone", set_timezone))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_meal))
 
-    print("Bot is running. Press Ctrl+C to stop.")
-    app.run_polling()
+    # Initialize and start bot polling
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+
+    # Start simple FastAPI for Render health checks
+    import uvicorn
+    from fastapi import FastAPI
+    web_app = FastAPI()
+
+    @web_app.get("/")
+    def read_root():
+        return {"status": "ok", "bot": "running"}
+
+    config = uvicorn.Config(web_app, host="0.0.0.0", port=int(os.getenv("PORT", "10000")), log_level="warning")
+    server = uvicorn.Server(config)
+
+    print("Bot and Web Server are running.")
+    try:
+        await server.serve()
+    finally:
+        # Clean up bot on exit
+        await app.updater.stop()
+        await app.stop()
+        await app.shutdown()
+
+
+def main() -> None:
+    asyncio.run(main_async())
 
 
 if __name__ == "__main__":
     main()
+
