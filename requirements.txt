@@ -19,4 +19,4 @@ starlette==1.2.0
 typing-inspection==0.4.2
 typing_extensions==4.15.0
 uvicorn==0.48.0
-pg8000>=1.30.0
+psycopg2-binary>=2.9.9
