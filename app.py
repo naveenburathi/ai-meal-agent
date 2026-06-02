@@ -60,7 +60,9 @@ ESTIMATE_SYSTEM_PROMPT = (
     "is about 300-360 kcal, 9g protein, 60-75g carbs, and 6-12g fat total. "
     "2 eggs is about 140 kcal, 12g protein, 1g carbs, and 10g fat total. "
     "Use realistic Indian household serving estimates when exact grams are "
-    "not given. Use integers only. Return JSON only."
+    "not given. Use integers only. Return JSON only. "
+    "CRITICAL: If the input text is not a meal description, is random text/gibberish, a greeting, a name, or does not contain any food/beverage items, "
+    "you MUST return an empty list for 'foods' and set all total macros to 0."
 )
 
 CALIBRATED_FOODS = {
@@ -514,6 +516,14 @@ async def handle_meal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text(
             "I couldn't understand that meal clearly yet. "
             "Try sending it like: 3 rotis, paneer sabzi, curd."
+        )
+        return
+
+    # If the LLM returns an empty foods list, it means the input was not identified as a meal
+    if not estimate.foods or estimate.total_calories == 0:
+        await update.message.reply_text(
+            "I couldn't identify any food items in your message. "
+            "Please describe a meal (e.g., '3 rotis, paneer sabzi' or 'oats and milk')."
         )
         return
 
