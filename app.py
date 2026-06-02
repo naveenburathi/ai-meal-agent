@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import DateTime, Integer, String, Text, create_engine, select
+from sqlalchemy import DateTime, Integer, String, Text, create_engine, select, BigInteger
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 from telegram import BotCommand, Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
@@ -74,7 +74,7 @@ class MealLog(Base):
     __tablename__ = "meal_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    telegram_user_id: Mapped[int] = mapped_column(Integer, index=True)
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, index=True)
     telegram_username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     meal_text: Mapped[str] = mapped_column(Text)
     foods_json: Mapped[str] = mapped_column(Text)
@@ -88,7 +88,7 @@ class MealLog(Base):
 class UserSetting(Base):
     __tablename__ = "user_settings"
 
-    telegram_user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     timezone: Mapped[str] = mapped_column(String(100), default="Asia/Kolkata")
 
 
@@ -96,7 +96,7 @@ class UserReminder(Base):
     __tablename__ = "user_meal_reminders"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    telegram_user_id: Mapped[int] = mapped_column(Integer, index=True)
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, index=True)
     reminder_time: Mapped[str] = mapped_column(String(5))  # "HH:MM" in 24-hour format
 
 
