@@ -677,6 +677,22 @@ async def post_init(application: Application) -> None:
     ])
 
 
+async def keep_alive() -> None:
+    url = os.getenv("RENDER_EXTERNAL_URL")
+    if not url:
+        logger.info("RENDER_EXTERNAL_URL not set, skipping keep-alive pinger.")
+        return
+
+    logger.info("Starting keep-alive pinger for: %s", url)
+    while True:
+        await asyncio.sleep(600)  # Ping every 10 minutes
+        try:
+            await asyncio.to_thread(urllib.request.urlopen, url, timeout=15)
+            logger.info("Keep-alive ping successful")
+        except Exception as e:
+            logger.warning("Keep-alive ping failed: %s", e)
+
+
 async def main_async() -> None:
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
@@ -701,6 +717,9 @@ async def main_async() -> None:
     await app.initialize()
     await app.start()
     await app.updater.start_polling()
+
+    # Start keep-alive loop
+    asyncio.create_task(keep_alive())
 
     # Start simple FastAPI for Render health checks
     import uvicorn
