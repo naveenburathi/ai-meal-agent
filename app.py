@@ -12,8 +12,8 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import DateTime, Integer, String, Text, create_engine, select, BigInteger
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
-from telegram import BotCommand, Update
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram import BotCommand, Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
 
 
 load_dotenv()
@@ -172,6 +172,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "and I will estimate and track your calories and protein.\n\n"
         "<b>Commands:</b>\n"
         "📅 /today - Show today's macro stats\n"
+        "🗑️ /delete_meal - Delete a meal logged today\n"
         "⏰ /reminders - View your active reminders\n"
         "🔔 /set_reminder <code>HH:MM</code> - Add a reminder (24-hour format, e.g. `/set_reminder 08:30`)\n"
         "🌐 /timezone <code>timezone</code> - Configure your timezone\n"
@@ -541,6 +542,62 @@ async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(format_daily_stats(logs))
 
 
+async def delete_meal_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    logs = await asyncio.to_thread(get_today_logs, user_id)
+
+    if not logs:
+        await update.message.reply_text("No meals logged today yet.")
+        return
+
+    tz_name = await asyncio.to_thread(get_user_timezone_name, user_id)
+    user_tz = ZoneInfo(tz_name)
+
+    keyboard = []
+    for log in logs:
+        local_time = log.created_at.astimezone(user_tz).strftime("%I:%M %p")
+        label = log.meal_text
+        if len(label) > 25:
+            label = label[:22] + "..."
+        btn_text = f"{label} ({local_time})"
+        keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"del_meal:{log.id}")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("Select the meal you want to delete:", reply_markup=reply_markup)
+
+
+async def delete_meal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+    if not data.startswith("del_meal:"):
+        return
+
+    meal_log_id = int(data.split(":")[1])
+    user_id = query.from_user.id
+
+    def perform_delete():
+        with SessionLocal() as session:
+            log = session.get(MealLog, meal_log_id)
+            if not log:
+                return "Meal already deleted or not found."
+            if log.telegram_user_id != user_id:
+                return "Unauthorized action."
+
+            start_utc, end_utc = today_bounds()
+            if not (start_utc <= log.created_at <= end_utc):
+                return "You can only delete meals logged today."
+
+            meal_text = log.meal_text
+            session.delete(log)
+            session.commit()
+            return f"Deleted meal: '{meal_text}'"
+
+    result_message = await asyncio.to_thread(perform_delete)
+    await query.edit_message_text(result_message)
+
+
 async def list_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     tz_name = await asyncio.to_thread(get_user_timezone_name, user_id)
@@ -690,6 +747,7 @@ async def set_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def post_init(application: Application) -> None:
     await application.bot.set_my_commands([
         BotCommand("today", "Show today's macro stats"),
+        BotCommand("delete_meal", "Delete a meal logged today"),
         BotCommand("reminders", "View your active reminders"),
         BotCommand("set_reminder", "Add/remove reminder time (HH:MM [off])"),
         BotCommand("timezone", "Set your local timezone"),
@@ -728,9 +786,11 @@ async def main_async() -> None:
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("today", today))
+    app.add_handler(CommandHandler("delete_meal", delete_meal_command))
     app.add_handler(CommandHandler("reminders", list_reminders))
     app.add_handler(CommandHandler("set_reminder", set_reminder))
     app.add_handler(CommandHandler("timezone", set_timezone))
+    app.add_handler(CallbackQueryHandler(delete_meal_callback, pattern="^del_meal:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_meal))
 
     # Initialize and start bot polling
