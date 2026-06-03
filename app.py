@@ -109,7 +109,12 @@ class UserReminder(Base):
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///meals.db")
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
-engine = create_engine(DATABASE_URL, connect_args=connect_args)
+engine = create_engine(
+    DATABASE_URL,
+    connect_args=connect_args,
+    pool_pre_ping=True,
+    pool_recycle=280
+)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 
