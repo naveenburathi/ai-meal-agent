@@ -700,7 +700,7 @@ async def keep_alive() -> None:
 
     logger.info("Starting keep-alive pinger for: %s", url)
     while True:
-        await asyncio.sleep(600)  # Ping every 10 minutes
+        await asyncio.sleep(100)  # Ping every 10 minutes
         try:
             await asyncio.to_thread(urllib.request.urlopen, url, timeout=15)
             logger.info("Keep-alive ping successful")
