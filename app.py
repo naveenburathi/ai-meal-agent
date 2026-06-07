@@ -1382,7 +1382,11 @@ async def keep_alive() -> None:
             logger.warning("Keep-alive ping failed: %s", e)
 
 
+BOT_USERNAME = "ai_meal_bot"
+
+
 def serve_login_error(message: str) -> str:
+    global BOT_USERNAME
     return f"""
     <!DOCTYPE html>
     <html lang="en">
@@ -1451,11 +1455,12 @@ def serve_login_error(message: str) -> str:
             <div class="icon">⚠️</div>
             <h2>Authentication Failed</h2>
             <p>{message}</p>
-            <a href="https://t.me/ai_meal_bot" class="btn">Open Telegram Bot</a>
+            <a href="https://t.me/{BOT_USERNAME}" class="btn">Open Telegram Bot</a>
         </div>
     </body>
     </html>
     """
+
 
 
 async def main_async() -> None:
@@ -1489,8 +1494,17 @@ async def main_async() -> None:
 
     # Initialize and start bot polling
     await app.initialize()
+    global BOT_USERNAME
+    try:
+        me = await app.bot.get_me()
+        BOT_USERNAME = me.username
+        logger.info("Connected as Telegram Bot: @%s", BOT_USERNAME)
+    except Exception as e:
+        logger.warning("Failed to fetch bot username: %s", e)
+
     await app.start()
     await app.updater.start_polling()
+
 
     # Start keep-alive loop
     asyncio.create_task(keep_alive())
@@ -1689,9 +1703,13 @@ async def main_async() -> None:
         try:
             index_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
             with open(index_path, "r", encoding="utf-8") as f:
-                return f.read()
+                content = f.read()
+                # Substitute the placeholder bot link with the actual bot username dynamically
+                content = content.replace("https://t.me/ai_meal_bot", f"https://t.me/{BOT_USERNAME}")
+                return content
         except FileNotFoundError:
             return serve_login_error("Dashboard index.html file not found in workspace.")
+
 
 
     config = uvicorn.Config(web_app, host="0.0.0.0", port=int(os.getenv("PORT", "10000")), log_level="warning")
