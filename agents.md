@@ -68,7 +68,9 @@ CALIBRATED_FOODS = {
 The application registers the following core Telegram bot commands:
 - `/start` & `/help`: Display welcome message and help instructions.
 - `/today`: Show today's macro stats, calorie consumption, and progress against goals.
+- `/yesterday <meal_description>`: Estimate and log calories/protein for the previous calendar day.
 - `/set_goal <calories> <protein>`: Configure daily calorie and protein targets (or `/set_goal off` to clear).
+- `/track_weight <weight_in_kg>`: Log or update weight for the current day.
 - `/delete_meal`: Interactive meal deletion via inline keyboard buttons for meals logged on the same day.
 - `/reminders` & `/set_reminder <HH:MM>`: View and configure daily meal logging reminders.
 - `/timezone <timezone_name>`: Set the user's local timezone (e.g. `Asia/Kolkata`) for bounds calculations.

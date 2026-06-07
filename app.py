@@ -5,7 +5,7 @@ import os
 import re
 import urllib.error
 import urllib.request
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timezone, timedelta
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
@@ -184,6 +184,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "and I will estimate and track your calories and protein.\n\n"
         "<b>Commands:</b>\n"
         "📅 /today - Show today's macro stats\n"
+        "🍽️ /yesterday <code>meal_description</code> - Log a meal for yesterday (e.g. `/yesterday 2 rotis, curd`)\n"
         "🎯 /set_goal <code>calories</code> <code>protein</code> - Set daily targets (e.g. `/set_goal 2000 150`)\n"
         "⚖️ /track_weight <code>weight_in_kg</code> - Log/update daily weight (e.g. `/track_weight 75.5`)\n"
         "🗑️ /delete_meal - Delete a meal logged today\n"
@@ -230,7 +231,8 @@ def format_estimate(
     daily_total_calories: int = 0,
     daily_total_protein: int = 0,
     calorie_goal: int | None = None,
-    protein_goal: int | None = None
+    protein_goal: int | None = None,
+    progress_title: str = "Daily Progress"
 ) -> str:
     lines = [
         "Meal logged ✅",
@@ -243,7 +245,7 @@ def format_estimate(
     # Add remaining calorie/protein targets if goals are set
     if calorie_goal is not None or protein_goal is not None:
         lines.append("")
-        lines.append("<b>Daily Progress:</b>")
+        lines.append(f"<b>{progress_title}:</b>")
         if calorie_goal is not None:
             remaining_cal = calorie_goal - daily_total_calories
             if remaining_cal >= 0:
@@ -273,7 +275,9 @@ def format_estimate(
     return "\n".join(lines)
 
 
-def save_meal_log(user, meal_text: str, estimate: MealEstimate) -> None:
+def save_meal_log(user, meal_text: str, estimate: MealEstimate, created_at: datetime | None = None) -> None:
+    if created_at is None:
+        created_at = datetime.now(timezone.utc)
     meal_log = MealLog(
         telegram_user_id=user.id,
         telegram_username=user.username,
@@ -283,23 +287,30 @@ def save_meal_log(user, meal_text: str, estimate: MealEstimate) -> None:
         protein=estimate.total_protein,
         carbs=estimate.total_carbs,
         fat=estimate.total_fat,
-        created_at=datetime.now(timezone.utc),
+        created_at=created_at,
     )
     with SessionLocal() as session:
         session.add(meal_log)
         session.commit()
 
 
-def today_bounds() -> tuple[datetime, datetime]:
-    app_timezone = ZoneInfo(os.getenv("APP_TIMEZONE", "Asia/Kolkata"))
-    today = datetime.now(app_timezone).date()
-    start = datetime.combine(today, time.min, tzinfo=app_timezone)
-    end = datetime.combine(today, time.max, tzinfo=app_timezone)
+def daily_bounds(tz_name: str, days_offset: int = 0) -> tuple[datetime, datetime]:
+    app_timezone = ZoneInfo(tz_name)
+    target_date = (datetime.now(app_timezone) + timedelta(days=days_offset)).date()
+    start = datetime.combine(target_date, time.min, tzinfo=app_timezone)
+    end = datetime.combine(target_date, time.max, tzinfo=app_timezone)
     return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
 
 
-def get_today_logs(user_id: int) -> list[MealLog]:
-    start, end = today_bounds()
+def today_bounds(tz_name: str | None = None) -> tuple[datetime, datetime]:
+    if tz_name is None:
+        tz_name = os.getenv("APP_TIMEZONE", "Asia/Kolkata")
+    return daily_bounds(tz_name, days_offset=0)
+
+
+def get_daily_logs(user_id: int, days_offset: int = 0) -> list[MealLog]:
+    tz_name = get_user_timezone_name(user_id)
+    start, end = daily_bounds(tz_name, days_offset)
     statement = (
         select(MealLog)
         .where(MealLog.telegram_user_id == user_id)
@@ -309,6 +320,10 @@ def get_today_logs(user_id: int) -> list[MealLog]:
     )
     with SessionLocal() as session:
         return list(session.scalars(statement))
+
+
+def get_today_logs(user_id: int) -> list[MealLog]:
+    return get_daily_logs(user_id, days_offset=0)
 
 
 def format_daily_stats(
@@ -972,10 +987,72 @@ async def track_weight(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text(f"Logged weight: {weight} kg for today.")
 
 
+async def yesterday_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message_text = update.message.text or ""
+    match = re.match(r'^/yesterday(?:@\w+)?\s+(.+)$', message_text, re.IGNORECASE | re.DOTALL)
+    if not match:
+        msg = (
+            "🍽️ *Yesterday's Meal Tracker*\n\n"
+            "Please describe the meal you had yesterday.\n"
+            "Tap the command below to copy, edit the meal, and send:\n"
+            "`/yesterday 2 rotis, curd`"
+        )
+        await update.message.reply_markdown(msg)
+        return
+
+    meal_text = match.group(1).strip()
+    try:
+        estimate = await asyncio.to_thread(estimate_meal, meal_text)
+    except Exception as e:
+        logger.error("Both LLM providers failed for yesterday's meal '%s': %s", meal_text, e)
+        await update.message.reply_text(
+            "I couldn't understand that meal clearly yet. "
+            "Try sending it like: /yesterday 3 rotis, paneer sabzi, curd."
+        )
+        return
+
+    # If the LLM returns an empty foods list, it means the input was not identified as a meal
+    if not estimate.foods or estimate.total_calories == 0:
+        await update.message.reply_text(
+            "I couldn't identify any food items in your message. "
+            "Please describe a meal (e.g., '/yesterday 3 rotis, paneer sabzi' or '/yesterday oats and milk')."
+        )
+        return
+
+    user_id = update.effective_user.id
+    tz_name = await asyncio.to_thread(get_user_timezone_name, user_id)
+    user_tz = ZoneInfo(tz_name)
+
+    # Calculate local yesterday's date, retaining the same time of day, converted to UTC
+    user_now = datetime.now(user_tz)
+    yesterday_local = user_now - timedelta(days=1)
+    created_at_utc = yesterday_local.astimezone(timezone.utc)
+
+    await asyncio.to_thread(save_meal_log, update.effective_user, meal_text, estimate, created_at_utc)
+
+    cal_goal, prot_goal = await asyncio.to_thread(get_user_goals, user_id)
+    logs = await asyncio.to_thread(get_daily_logs, user_id, days_offset=-1)
+    daily_calories = sum(log.calories for log in logs)
+    daily_protein = sum(log.protein for log in logs)
+
+    await update.message.reply_text(
+        format_estimate(
+            estimate,
+            daily_total_calories=daily_calories,
+            daily_total_protein=daily_protein,
+            calorie_goal=cal_goal,
+            protein_goal=prot_goal,
+            progress_title="Yesterday's Progress"
+        ),
+        parse_mode="HTML"
+    )
+
+
 async def post_init(application: Application) -> None:
     await application.bot.set_my_commands([
         BotCommand("start", "Start the bot and see instructions"),
         BotCommand("today", "Show today's macro stats"),
+        BotCommand("yesterday", "Log a meal for yesterday (yesterday meal_description)"),
         BotCommand("set_goal", "Set daily calorie/protein goals (calories protein)"),
         BotCommand("track_weight", "Log/update your weight for today (weight_in_kg)"),
         BotCommand("delete_meal", "Delete a meal logged today"),
@@ -1017,6 +1094,7 @@ async def main_async() -> None:
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("today", today))
+    app.add_handler(CommandHandler("yesterday", yesterday_command))
     app.add_handler(CommandHandler("set_goal", set_goal))
     app.add_handler(CommandHandler("track_weight", track_weight))
     app.add_handler(CommandHandler("delete_meal", delete_meal_command))

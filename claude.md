@@ -42,12 +42,12 @@ Do **not** introduce external networking packages (like `requests` or `httpx`) t
 ## 🤖 Telegram Bot (v20+) Async/Await
 
 `python-telegram-bot` version 22.7 is used. It is fully asynchronous.
-- All handler functions (`start`, `handle_meal`) **must** be async (`async def`).
+- All handler functions (`start`, `handle_meal`, `yesterday_command`, `track_weight`) **must** be async (`async def`).
 - Synchronous calls inside handlers (like `estimate_meal`, which communicates with external APIs synchronously via `urllib`) **must** be run using `asyncio.to_thread` to prevent blocking the main event loop:
   ```python
   estimate = await asyncio.to_thread(estimate_meal, text)
   ```
-- Always use `await update.message.reply_text(...)` to send responses.
+- Always use `await update.message.reply_text(...)` or `reply_markdown(...)` to send responses.
 
 ---
 
