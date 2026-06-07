@@ -393,6 +393,16 @@ def set_user_timezone(user_id: int, tz_name: str) -> None:
         session.commit()
 
 
+def get_user_reminders_list(user_id: int) -> list[str]:
+    with SessionLocal() as session:
+        reminders = session.scalars(
+            select(UserReminder)
+            .where(UserReminder.telegram_user_id == user_id)
+            .order_by(UserReminder.reminder_time.asc())
+        ).all()
+        return [r.reminder_time for r in reminders]
+
+
 def get_user_goals(user_id: int) -> tuple[int | None, int | None]:
     with SessionLocal() as session:
         setting = session.get(UserSetting, user_id)
@@ -860,7 +870,16 @@ async def set_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             cancel_user_reminder(context.job_queue, user_id, time_str)
             await update.message.reply_text(f"Removed reminder for {time_str}.")
         else:
-            await update.message.reply_text(f"No reminder was set for {time_str}.")
+            active_reminders = await asyncio.to_thread(get_user_reminders_list, user_id)
+            if active_reminders:
+                reminders_str = ", ".join(f"`{r}`" for r in active_reminders)
+                await update.message.reply_markdown(
+                    f"No reminder was set for `{time_str}`.\n\n"
+                    f"⏰ *Your active reminders:* {reminders_str}\n"
+                    f"To turn off, copy exact time: `/set_reminder HH:MM off`"
+                )
+            else:
+                await update.message.reply_text(f"No reminder was set for {time_str} (you have no active reminders).")
     else:
         def add():
             with SessionLocal() as session:
