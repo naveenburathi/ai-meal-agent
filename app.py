@@ -300,25 +300,48 @@ def get_today_logs(user_id: int) -> list[MealLog]:
         return list(session.scalars(statement))
 
 
-def format_daily_stats(logs: list[MealLog]) -> str:
-    if not logs:
+def format_daily_stats(
+    logs: list[MealLog],
+    calorie_goal: int | None = None,
+    protein_goal: int | None = None
+) -> str:
+    if not logs and calorie_goal is None and protein_goal is None:
         return "No meals logged today yet."
 
-    calories = sum(log.calories for log in logs)
-    protein = sum(log.protein for log in logs)
-    carbs = sum(log.carbs for log in logs)
-    fat = sum(log.fat for log in logs)
+    calories = sum(log.calories for log in logs) if logs else 0
+    protein = sum(log.protein for log in logs) if logs else 0
+    carbs = sum(log.carbs for log in logs) if logs else 0
+    fat = sum(log.fat for log in logs) if logs else 0
 
-    return "\n".join(
-        [
-            "Today Summary",
-            f"Meals logged: {len(logs)}",
-            f"Calories: ~{calories} kcal",
-            f"Protein: ~{protein}g",
-            f"Carbs: ~{carbs}g",
-            f"Fat: ~{fat}g",
-        ]
-    )
+    lines = [
+        "<b>Today Summary 📅</b>",
+        f"Meals logged: {len(logs)}",
+        f"Calories: ~{calories} kcal",
+        f"Protein: ~{protein}g",
+        f"Carbs: ~{carbs}g",
+        f"Fat: ~{fat}g",
+    ]
+
+    if calorie_goal is not None or protein_goal is not None:
+        lines.append("")
+        lines.append("<b>Daily Progress:</b>")
+        if calorie_goal is not None:
+            remaining_cal = calorie_goal - calories
+            if remaining_cal >= 0:
+                cal_status = f" ({remaining_cal} kcal remaining)"
+            else:
+                cal_status = f" (exceeded by {abs(remaining_cal)} kcal)"
+            lines.append(f"• Calories: {calories} / {calorie_goal} kcal{cal_status}")
+
+        if protein_goal is not None:
+            remaining_prot = protein_goal - protein
+            if remaining_prot >= 0:
+                prot_status = f" ({remaining_prot}g remaining)"
+            else:
+                prot_status = f" (exceeded by {abs(remaining_prot)}g)"
+            lines.append(f"• Protein: {protein} / {protein_goal}g{prot_status}")
+
+    return "\n".join(lines)
 
 
 def get_user_timezone_name(user_id: int) -> str:
@@ -603,8 +626,13 @@ async def handle_meal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logs = await asyncio.to_thread(get_today_logs, update.effective_user.id)
-    await update.message.reply_text(format_daily_stats(logs))
+    user_id = update.effective_user.id
+    logs = await asyncio.to_thread(get_today_logs, user_id)
+    cal_goal, prot_goal = await asyncio.to_thread(get_user_goals, user_id)
+    await update.message.reply_text(
+        format_daily_stats(logs, calorie_goal=cal_goal, protein_goal=prot_goal),
+        parse_mode="HTML"
+    )
 
 
 async def delete_meal_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -869,6 +897,7 @@ async def set_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def post_init(application: Application) -> None:
     await application.bot.set_my_commands([
+        BotCommand("start", "Start the bot and see instructions"),
         BotCommand("today", "Show today's macro stats"),
         BotCommand("set_goal", "Set daily calorie/protein goals (calories protein)"),
         BotCommand("delete_meal", "Delete a meal logged today"),
