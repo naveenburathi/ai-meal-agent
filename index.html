@@ -536,7 +536,38 @@
             50% { transform: scale(1.18); filter: drop-shadow(0 0 10px rgba(249, 115, 22, 0.6)); }
             100% { transform: scale(1.1); filter: drop-shadow(0 0 2px rgba(249, 115, 22, 0.2)); }
         }
+
+        /* Chart toggle buttons styling */
+        .chart-toggle-group {
+            display: flex;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            padding: 2px;
+            gap: 2px;
+        }
+        .btn-toggle {
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            padding: 6px 12px;
+            font-size: 12px;
+            font-weight: 600;
+            font-family: 'Outfit', sans-serif;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .btn-toggle:hover {
+            color: var(--text-primary);
+        }
+        .btn-toggle.active {
+            background: rgba(255, 255, 255, 0.08);
+            color: var(--text-primary);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        }
     </style>
+
 
 </head>
 <body>
@@ -634,7 +665,14 @@
 
             <!-- Historical Intake (7-day chart) -->
             <div class="glass-card">
-                <div class="card-title">Last 7 Days Consumption</div>
+                <div class="card-title">
+                    <span>Last 7 Days Consumption</span>
+                    <div class="chart-toggle-group">
+                        <button class="btn-toggle active" id="btn-chart-bar" onclick="setChartType('bar')">Bars</button>
+                        <button class="btn-toggle" id="btn-chart-line" onclick="setChartType('line')">Lines</button>
+                    </div>
+                </div>
+
                 <div class="chart-container">
                     <canvas id="weeklyHistoryChart"></canvas>
                 </div>
@@ -757,6 +795,9 @@
 
     <script>
         let todayWorkoutStatus = false;
+        let currentChartType = 'bar';
+        let weeklyHistoryData = null;
+
 
         // Check url parameters for magic login link token
         const urlParams = new URLSearchParams(window.location.search);
@@ -848,7 +889,9 @@
                 }
 
                 // Render Chart
-                renderChart(data.weekly_history);
+                weeklyHistoryData = data.weekly_history;
+                renderChart(weeklyHistoryData);
+
 
                 // Update Workout Streak UI
                 updateWorkoutUI(data.workout_today, data.workout_streak, data.workout_max_streak);
@@ -881,30 +924,44 @@
                 window.weeklyChart.destroy();
             }
 
+            const isLine = currentChartType === 'line';
+
+            const datasets = [
+                {
+                    label: 'Calories (kcal)',
+                    data: history.calories,
+                    backgroundColor: isLine ? 'rgba(6, 182, 212, 0.08)' : 'rgba(6, 182, 212, 0.4)',
+                    borderColor: 'rgba(6, 182, 212, 1)',
+                    borderWidth: isLine ? 2.5 : 1.5,
+                    borderRadius: isLine ? 0 : 6,
+                    fill: isLine,
+                    tension: isLine ? 0.35 : 0,
+                    pointBackgroundColor: 'rgba(6, 182, 212, 1)',
+                    pointRadius: isLine ? 4 : 0,
+                    pointHoverRadius: isLine ? 6 : 0,
+                    yAxisID: 'y'
+                },
+                {
+                    label: 'Protein (g)',
+                    data: history.protein,
+                    backgroundColor: isLine ? 'rgba(16, 185, 129, 0.08)' : 'rgba(16, 185, 129, 0.4)',
+                    borderColor: 'rgba(16, 185, 129, 1)',
+                    borderWidth: isLine ? 2.5 : 1.5,
+                    borderRadius: isLine ? 0 : 6,
+                    fill: isLine,
+                    tension: isLine ? 0.35 : 0,
+                    pointBackgroundColor: 'rgba(16, 185, 129, 1)',
+                    pointRadius: isLine ? 4 : 0,
+                    pointHoverRadius: isLine ? 6 : 0,
+                    yAxisID: 'y1'
+                }
+            ];
+
             window.weeklyChart = new Chart(ctx, {
-                type: 'bar',
+                type: currentChartType,
                 data: {
                     labels: history.labels,
-                    datasets: [
-                        {
-                            label: 'Calories (kcal)',
-                            data: history.calories,
-                            backgroundColor: 'rgba(6, 182, 212, 0.4)',
-                            borderColor: 'rgba(6, 182, 212, 1)',
-                            borderWidth: 1.5,
-                            borderRadius: 6,
-                            yAxisID: 'y'
-                        },
-                        {
-                            label: 'Protein (g)',
-                            data: history.protein,
-                            backgroundColor: 'rgba(16, 185, 129, 0.4)',
-                            borderColor: 'rgba(16, 185, 129, 1)',
-                            borderWidth: 1.5,
-                            borderRadius: 6,
-                            yAxisID: 'y1'
-                        }
-                    ]
+                    datasets: datasets
                 },
                 options: {
                     responsive: true,
@@ -938,6 +995,19 @@
                 }
             });
         }
+
+        function setChartType(type) {
+            if (currentChartType === type) return;
+            currentChartType = type;
+            
+            document.getElementById('btn-chart-bar').classList.toggle('active', type === 'bar');
+            document.getElementById('btn-chart-line').classList.toggle('active', type === 'line');
+            
+            if (weeklyHistoryData) {
+                renderChart(weeklyHistoryData);
+            }
+        }
+
 
         function logout() {
             // Delete cookie by setting expiry date in past
