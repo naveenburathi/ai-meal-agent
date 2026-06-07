@@ -19,7 +19,8 @@ COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy project files
-COPY app.py /app/
+COPY . /app/
+
 
 # Expose port (Render requires bound port for health checks if deployed as web service, otherwise running as background worker is fine)
 EXPOSE 10000

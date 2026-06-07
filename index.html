@@ -422,7 +422,122 @@
             50% { transform: translateY(-10px); }
             100% { transform: translateY(0px); }
         }
+
+        /* Workout Card specific styling */
+        .workout-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 24px;
+            padding: 10px 0;
+        }
+        .streak-badge-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            width: 130px;
+            height: 130px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.015);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            box-shadow: inset 0 0 20px rgba(255, 255, 255, 0.02);
+            transition: all 0.5s ease;
+            flex-shrink: 0;
+        }
+        .streak-badge-container.active {
+            border-color: rgba(249, 115, 22, 0.3);
+            box-shadow: 0 0 30px rgba(249, 115, 22, 0.15), inset 0 0 20px rgba(249, 115, 22, 0.05);
+        }
+        .flame-icon {
+            font-size: 44px;
+            filter: grayscale(100%);
+            transition: all 0.5s ease;
+            transform: scale(0.9);
+        }
+        .streak-badge-container.active .flame-icon {
+            filter: grayscale(0%);
+            transform: scale(1.1);
+            animation: flame-pulse 2s ease-in-out infinite;
+        }
+        .streak-details {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .streak-stat {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 14px;
+            background: rgba(255, 255, 255, 0.015);
+            border: 1px solid rgba(255, 255, 255, 0.03);
+            border-radius: 14px;
+            font-size: 14px;
+        }
+        .streak-stat-label {
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+        .streak-stat-value {
+            font-weight: 700;
+            font-size: 16px;
+        }
+        .streak-stat-value.highlight {
+            color: var(--accent-orange);
+        }
+        .btn-workout-toggle {
+            width: 100%;
+            padding: 14px;
+            border-radius: 16px;
+            border: 1px solid var(--card-border);
+            font-weight: 600;
+            font-size: 15px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 16px;
+        }
+        .btn-workout-toggle.inactive {
+            background: rgba(255, 255, 255, 0.03);
+            color: var(--text-primary);
+        }
+        .btn-workout-toggle.inactive:hover {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: rgba(255, 255, 255, 0.15);
+            transform: translateY(-1px);
+        }
+        .btn-workout-toggle.active {
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(16, 185, 129, 0.05));
+            border-color: rgba(16, 185, 129, 0.4);
+            color: var(--accent-green);
+            box-shadow: 0 0 20px rgba(16, 185, 129, 0.1);
+        }
+        .btn-workout-toggle.active:hover {
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.25), rgba(16, 185, 129, 0.08));
+            transform: translateY(-1px);
+        }
+        .vision-quote {
+            font-style: italic;
+            color: var(--text-secondary);
+            line-height: 1.6;
+            font-size: 14px;
+            border-left: 3px solid var(--accent-cyan);
+            padding-left: 16px;
+            margin-top: 10px;
+        }
+        @keyframes flame-pulse {
+            0% { transform: scale(1.1); filter: drop-shadow(0 0 2px rgba(249, 115, 22, 0.2)); }
+            50% { transform: scale(1.18); filter: drop-shadow(0 0 10px rgba(249, 115, 22, 0.6)); }
+            100% { transform: scale(1.1); filter: drop-shadow(0 0 2px rgba(249, 115, 22, 0.2)); }
+        }
     </style>
+
 </head>
 <body>
     <div class="ambient-glow glow-1"></div>
@@ -599,12 +714,54 @@
                 </div>
             </div>
         </div>
+
+        <!-- Workout & Consistency Grid -->
+        <div class="dashboard-grid">
+            <!-- Workout Streak & Gym Tracker -->
+            <div class="glass-card">
+                <div class="card-title">Gym Workout & Consistency Tracker</div>
+                <div class="workout-container">
+                    <div class="streak-badge-container" id="streak-container">
+                        <span class="flame-icon">🔥</span>
+                    </div>
+                    <div class="streak-details">
+                        <div class="streak-stat">
+                            <span class="streak-stat-label">Current Streak</span>
+                            <span class="streak-stat-value highlight" id="workout-streak-val">0 days</span>
+                        </div>
+                        <div class="streak-stat">
+                            <span class="streak-stat-label">Personal Best</span>
+                            <span class="streak-stat-value" id="workout-max-streak-val">0 days</span>
+                        </div>
+                    </div>
+                </div>
+                <button class="btn-workout-toggle inactive" id="btn-workout" onclick="toggleWorkoutToday()">
+                    <span id="workout-btn-icon">🏋️‍♂️</span>
+                    <span id="workout-btn-text">Mark Workout Done</span>
+                </button>
+            </div>
+
+            <!-- Vision / Motivation Card -->
+            <div class="glass-card" style="display: flex; flex-direction: column; justify-content: center; padding: 32px;">
+                <div class="card-title" style="margin-bottom: 16px;">Consistency is Key 🔑</div>
+                <p style="color: var(--text-secondary); font-size: 15px; line-height: 1.6; margin-bottom: 16px;">
+                    Many people invest an incredible amount of time, money, and energy into their workouts and nutrition, yet fail to see results simply because they don't track their daily progress objectively.
+                </p>
+                <div class="vision-quote">
+                    "Only if we track it better can we get the results we work so hard for."
+                </div>
+            </div>
+        </div>
     </div>
 
+
     <script>
+        let todayWorkoutStatus = false;
+
         // Check url parameters for magic login link token
         const urlParams = new URLSearchParams(window.location.search);
         const token = urlParams.get('token');
+
         if (token) {
             // Magic link was clicked, redirecting to /login endpoint
             window.location.href = `/login?token=${token}`;
@@ -693,7 +850,10 @@
                 // Render Chart
                 renderChart(data.weekly_history);
 
+                // Update Workout Streak UI
+                updateWorkoutUI(data.workout_today, data.workout_streak, data.workout_max_streak);
             } catch (err) {
+
                 console.error(err);
                 // On error, show splash screen
                 document.getElementById('splash-screen').style.display = 'flex';
@@ -793,6 +953,69 @@
                 .replace(/"/g, "&quot;")
                 .replace(/'/g, "&#039;");
         }
+
+        function updateWorkoutUI(today, streak, maxStreak) {
+            todayWorkoutStatus = today;
+            
+            document.getElementById('workout-streak-val').innerText = `${streak} ${streak === 1 ? 'day' : 'days'}`;
+            document.getElementById('workout-max-streak-val').innerText = `${maxStreak} ${maxStreak === 1 ? 'day' : 'days'}`;
+            
+            const container = document.getElementById('streak-container');
+            if (streak > 0) {
+                container.classList.add('active');
+            } else {
+                container.classList.remove('active');
+            }
+            
+            const btn = document.getElementById('btn-workout');
+            const icon = document.getElementById('workout-btn-icon');
+            const text = document.getElementById('workout-btn-text');
+            
+            if (today) {
+                btn.classList.add('active');
+                btn.classList.remove('inactive');
+                icon.innerText = '✅';
+                text.innerText = 'Workout Logged';
+            } else {
+                btn.classList.add('inactive');
+                btn.classList.remove('active');
+                icon.innerText = '🏋️‍♂️';
+                text.innerText = 'Mark Workout Done';
+            }
+        }
+
+        async function toggleWorkoutToday() {
+            // Get today's local date in YYYY-MM-DD
+            const offset = new Date().getTimezoneOffset();
+            const localDate = new Date(new Date().getTime() - (offset * 60 * 1000));
+            const dateStr = localDate.toISOString().split('T')[0];
+            
+            const newStatus = !todayWorkoutStatus;
+            
+            try {
+                const response = await fetch('/api/workout', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        date: dateStr,
+                        status: newStatus
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Failed to update workout status');
+                }
+                
+                const result = await response.json();
+                updateWorkoutUI(result.workout_today, result.workout_streak, result.workout_max_streak);
+            } catch (err) {
+                console.error(err);
+                alert('Error updating workout status. Please try again.');
+            }
+        }
     </script>
+
 </body>
 </html>

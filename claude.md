@@ -4,6 +4,15 @@ This guide outlines specific constraints, recommendations, and code patterns for
 
 ---
 
+## 🌟 Vision & Philosophy
+
+The core mission of the **AI Meal Agent** is to help people track their workout and nutrition journey.
+Many people invest a tremendous amount of time, money, and energy into their workouts and nutrition, yet fail to see the results they expect. Often, they believe they are doing everything right, but because they are not tracking their habits and inputs objectively, they cannot see where they are falling short.
+By providing low-friction natural language tracking and streak-based accountability, this bot aims to empower users to track accurately, build consistency, and finally achieve the results their hard work deserves.
+
+---
+
+
 ## ⚠️ Critical Warning: Pydantic v2 vs v1
 
 Claude has a strong tendency to hallucinate Pydantic v1 code (e.g., using `class Config:`, `@validator`, or `.dict()`) because a significant amount of its pre-training data contains Pydantic v1 syntax.

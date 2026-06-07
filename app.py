@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import DateTime, Integer, String, Text, create_engine, select, BigInteger, Date, Float, text, inspect
+from sqlalchemy import DateTime, Integer, String, Text, create_engine, select, BigInteger, Date, Float, text, inspect, Boolean
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 from telegram import BotCommand, Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
@@ -122,6 +122,16 @@ class WeightLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class WorkoutLog(Base):
+    __tablename__ = "workout_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    logged_date: Mapped[datetime] = mapped_column(Date, index=True)
+    workout_done: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///meals.db")
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 engine = create_engine(
@@ -194,6 +204,8 @@ def init_db() -> None:
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    await asyncio.to_thread(ensure_user_initialized, context.job_queue, user_id)
     msg = (
         "Welcome to the AI Meal Tracker Bot! 🍽️\n\n"
         "Send me any meal in natural language (e.g., '3 rotis and 2 eggs'), "
@@ -212,6 +224,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "❓ /help - Show this help message again"
     )
     await update.message.reply_text(msg, parse_mode='HTML')
+
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -511,6 +524,83 @@ def save_or_update_weight(user_id: int, weight: float, tz_name: str) -> bool:
             return False
 
 
+def save_or_update_workout(user_id: int, date_val, status: bool) -> None:
+    with SessionLocal() as session:
+        statement = (
+            select(WorkoutLog)
+            .where(WorkoutLog.telegram_user_id == user_id)
+            .where(WorkoutLog.logged_date == date_val)
+        )
+        existing = session.scalar(statement)
+        if existing:
+            existing.workout_done = status
+            existing.created_at = datetime.now(timezone.utc)
+        else:
+            new_log = WorkoutLog(
+                telegram_user_id=user_id,
+                logged_date=date_val,
+                workout_done=status,
+                created_at=datetime.now(timezone.utc)
+            )
+            session.add(new_log)
+        session.commit()
+
+
+def get_workout_status(user_id: int, date_val) -> bool:
+    with SessionLocal() as session:
+        statement = (
+            select(WorkoutLog)
+            .where(WorkoutLog.telegram_user_id == user_id)
+            .where(WorkoutLog.logged_date == date_val)
+        )
+        log = session.scalar(statement)
+        return log.workout_done if log else False
+
+
+def calculate_workout_streak(user_id: int) -> tuple[int, int]:
+    from datetime import date
+    with SessionLocal() as session:
+        statement = (
+            select(WorkoutLog)
+            .where(WorkoutLog.telegram_user_id == user_id)
+            .where(WorkoutLog.workout_done == True)
+            .order_by(WorkoutLog.logged_date.asc())
+        )
+        workout_logs = session.scalars(statement).all()
+        
+        if not workout_logs:
+            return 0, 0
+            
+        current_streak = 0
+        max_streak = 0
+        
+        workout_dates = [log.logged_date for log in workout_logs]
+        workout_dates = sorted(list(set(workout_dates)))
+        
+        for idx, workout_date in enumerate(workout_dates):
+            if idx == 0:
+                current_streak = 1
+            else:
+                gap = (workout_date - workout_dates[idx - 1]).days
+                if gap <= 3:
+                    current_streak += 1
+                else:
+                    current_streak = 1
+            max_streak = max(max_streak, current_streak)
+            
+        tz_name = get_user_timezone_name(user_id)
+        user_tz = ZoneInfo(tz_name)
+        today_local = datetime.now(user_tz).date()
+        
+        last_workout_date = workout_dates[-1]
+        days_since_last_workout = (today_local - last_workout_date).days
+        
+        if days_since_last_workout > 3:
+            current_streak = 0
+            
+        return current_streak, max_streak
+
+
 def get_next_reminder_time(user_id: int, current_time_str: str) -> str | None:
     with SessionLocal() as session:
         reminders = session.scalars(
@@ -591,7 +681,99 @@ def cancel_user_reminder(job_queue, user_id: int, time_str: str) -> None:
         job.schedule_removal()
 
 
+def schedule_workout_poll(job_queue, user_id: int, tz_name: str) -> None:
+    job_name = f"workout_poll_{user_id}"
+    current_jobs = job_queue.get_jobs_by_name(job_name)
+    for job in current_jobs:
+        job.schedule_removal()
+    try:
+        user_tz = ZoneInfo(tz_name)
+    except Exception:
+        user_tz = ZoneInfo("Asia/Kolkata")
+    poll_time = time(hour=23, minute=30, tzinfo=user_tz)
+    job_queue.run_daily(
+        callback=send_workout_poll_callback,
+        time=poll_time,
+        name=job_name,
+        data={"user_id": user_id}
+    )
+
+
+async def send_workout_poll_callback(context: ContextTypes.DEFAULT_TYPE) -> None:
+    job = context.job
+    user_id = job.data["user_id"]
+    tz_name = await asyncio.to_thread(get_user_timezone_name, user_id)
+    user_tz = ZoneInfo(tz_name)
+    today_str = datetime.now(user_tz).strftime("%Y-%m-%d")
+    keyboard = [
+        [
+            InlineKeyboardButton("Yes ✅", callback_data=f"workout:yes:{today_str}"),
+            InlineKeyboardButton("No ❌", callback_data=f"workout:no:{today_str}")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    text = (
+        "🏋️‍♂️ *Daily Workout Check-In*\n\n"
+        "Did you hit the gym or workout today?"
+    )
+    await context.bot.send_message(
+        chat_id=user_id,
+        text=text,
+        reply_markup=reply_markup,
+        parse_mode="Markdown"
+    )
+
+
+async def workout_poll_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    parts = data.split(":")
+    if len(parts) != 3:
+        return
+    action = parts[1]
+    date_str = parts[2]
+    try:
+        date_val = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        return
+    user_id = query.from_user.id
+    status = (action == "yes")
+    await asyncio.to_thread(save_or_update_workout, user_id, date_val, status)
+    current_streak, max_streak = await asyncio.to_thread(calculate_workout_streak, user_id)
+    status_text = "Yes ✅" if status else "No ❌"
+    message_text = (
+        f"🏋️‍♂️ *Workout Poll Result*\n\n"
+        f"Date: `{date_str}`\n"
+        f"Worked out? *{status_text}*\n\n"
+        f"🔥 *Current Streak:* {current_streak} workouts\n"
+        f"🏆 *Max Streak:* {max_streak} workouts"
+    )
+    await query.edit_message_text(
+        text=message_text,
+        parse_mode="Markdown"
+    )
+
+
+def ensure_user_initialized(job_queue, user_id: int) -> None:
+    with SessionLocal() as session:
+        setting = session.get(UserSetting, user_id)
+        if not setting:
+            setting = UserSetting(telegram_user_id=user_id, timezone="Asia/Kolkata")
+            session.add(setting)
+            session.commit()
+            if job_queue:
+                try:
+                    schedule_workout_poll(job_queue, user_id, "Asia/Kolkata")
+                except Exception:
+                    pass
+
+
 def reschedule_user_all_reminders(job_queue, user_id: int, tz_name: str) -> None:
+    try:
+        schedule_workout_poll(job_queue, user_id, tz_name)
+    except Exception:
+        pass
     with SessionLocal() as session:
         reminders = session.scalars(
             select(UserReminder)
@@ -608,13 +790,15 @@ def load_all_reminders(application) -> None:
     if not application.job_queue:
         print("JobQueue is not initialized. Skipping loading reminders.")
         return
-
     with SessionLocal() as session:
         settings = session.scalars(select(UserSetting)).all()
         tz_map = {s.telegram_user_id: s.timezone for s in settings}
-
+        for user_id, tz_name in tz_map.items():
+            try:
+                schedule_workout_poll(application.job_queue, user_id, tz_name)
+            except Exception as e:
+                print(f"Failed to schedule workout poll for user {user_id}: {e}")
         reminders = session.scalars(select(UserReminder)).all()
-
         for r in reminders:
             tz_name = tz_map.get(r.telegram_user_id, os.getenv("APP_TIMEZONE", "Asia/Kolkata"))
             try:
@@ -714,9 +898,12 @@ def estimate_meal(text: str) -> MealEstimate:
 
 
 async def handle_meal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    await asyncio.to_thread(ensure_user_initialized, context.job_queue, user_id)
     text = update.message.text
     try:
         estimate = await asyncio.to_thread(estimate_meal, text)
+
     except Exception as e:
         logger.error("Both LLM providers failed for '%s': %s", text, e)
         await update.message.reply_text(
@@ -1296,7 +1483,9 @@ async def main_async() -> None:
     app.add_handler(CommandHandler("set_reminder", set_reminder))
     app.add_handler(CommandHandler("timezone", set_timezone))
     app.add_handler(CallbackQueryHandler(delete_meal_callback, pattern="^del_meal:"))
+    app.add_handler(CallbackQueryHandler(workout_poll_callback, pattern="^workout:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_meal))
+
 
     # Initialize and start bot polling
     await app.initialize()
@@ -1429,6 +1618,11 @@ async def main_async() -> None:
 
         history_labels, history_calories, history_protein = await asyncio.to_thread(fetch_history)
 
+        user_tz = ZoneInfo(tz_name)
+        today_date = datetime.now(user_tz).date()
+        workout_today = await asyncio.to_thread(get_workout_status, user_id, today_date)
+        workout_streak, workout_max_streak = await asyncio.to_thread(calculate_workout_streak, user_id)
+
         return JSONResponse(content={
             "username": username,
             "timezone": tz_name,
@@ -1456,16 +1650,49 @@ async def main_async() -> None:
                 "labels": history_labels,
                 "calories": history_calories,
                 "protein": history_protein
-            }
+            },
+            "workout_today": workout_today,
+            "workout_streak": workout_streak,
+            "workout_max_streak": workout_max_streak
         })
+
+    class WorkoutUpdateRequest(BaseModel):
+        date: str
+        status: bool
+
+    @web_app.post("/api/workout")
+    async def update_workout_status(req: WorkoutUpdateRequest, session_token: str | None = Cookie(None)):
+        if not session_token:
+            return JSONResponse(content={"error": "Unauthorized"}, status_code=401)
+        user_id = await asyncio.to_thread(get_user_by_session_token, session_token)
+        if user_id is None:
+            return JSONResponse(content={"error": "Unauthorized"}, status_code=401)
+
+        try:
+            date_val = datetime.strptime(req.date, "%Y-%m-%d").date()
+        except ValueError:
+            return JSONResponse(content={"error": "Invalid date format"}, status_code=400)
+
+        await asyncio.to_thread(save_or_update_workout, user_id, date_val, req.status)
+        current_streak, max_streak = await asyncio.to_thread(calculate_workout_streak, user_id)
+
+        return JSONResponse(content={
+            "status": "success",
+            "workout_today": req.status,
+            "workout_streak": current_streak,
+            "workout_max_streak": max_streak
+        })
+
 
     @web_app.get("/", response_class=HTMLResponse)
     def read_root():
         try:
-            with open("index.html", "r", encoding="utf-8") as f:
+            index_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
+            with open(index_path, "r", encoding="utf-8") as f:
                 return f.read()
         except FileNotFoundError:
             return serve_login_error("Dashboard index.html file not found in workspace.")
+
 
     config = uvicorn.Config(web_app, host="0.0.0.0", port=int(os.getenv("PORT", "10000")), log_level="warning")
     server = uvicorn.Server(config)

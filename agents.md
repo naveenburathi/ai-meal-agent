@@ -4,6 +4,15 @@ Welcome! This document provides an architectural overview, design patterns, and 
 
 ---
 
+## 🌟 Vision & Philosophy
+
+The core mission of the **AI Meal Agent** is to help people track their workout and nutrition journey.
+Many people invest a tremendous amount of time, money, and energy into their workouts and nutrition, yet fail to see the results they expect. Often, they believe they are doing everything right, but because they are not tracking their habits and inputs objectively, they cannot see where they are falling short.
+By providing low-friction natural language tracking and streak-based accountability, this bot aims to empower users to track accurately, build consistency, and finally achieve the results their hard work deserves.
+
+---
+
+
 ## 🏗️ Architecture Overview
 
 The AI Meal Agent is a Telegram bot designed to estimate and track calories and protein from natural language meal descriptions.
