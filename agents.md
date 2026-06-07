@@ -70,6 +70,7 @@ The application registers the following core Telegram bot commands:
 - `/today`: Show today's macro stats, calorie consumption, and progress against goals.
 - `/yesterday <meal_description>`: Estimate and log calories/protein for the previous calendar day.
 - `/yesterday_summary`: Show yesterday's macro stats, calorie consumption, and progress against goals.
+- `/dashboard`: Generates a secure login link to the Web UI dashboard.
 - `/set_goal <calories> <protein>`: Configure daily calorie and protein targets (or `/set_goal off` to clear).
 - `/track_weight <weight_in_kg>`: Log or update weight for the current day.
 - `/delete_meal`: Interactive meal deletion via inline keyboard buttons for meals logged on the same day.

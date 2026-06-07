@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import urllib.error
 import urllib.request
 from datetime import datetime, time, timezone, timedelta
@@ -10,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import DateTime, Integer, String, Text, create_engine, select, BigInteger, Date, Float
+from sqlalchemy import DateTime, Integer, String, Text, create_engine, select, BigInteger, Date, Float, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 from telegram import BotCommand, Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
@@ -99,6 +100,8 @@ class UserSetting(Base):
     timezone: Mapped[str] = mapped_column(String(100), default="Asia/Kolkata")
     calorie_goal: Mapped[int | None] = mapped_column(Integer, nullable=True)
     protein_goal: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    auth_token: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    token_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class UserReminder(Base):
@@ -175,6 +178,21 @@ class MealEstimate(BaseModel):
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
+    with engine.begin() as conn:
+        try:
+            conn.execute(text("SELECT auth_token FROM user_settings LIMIT 1"))
+        except Exception:
+            try:
+                conn.execute(text("ALTER TABLE user_settings ADD COLUMN auth_token VARCHAR(100)"))
+            except Exception as e:
+                logger.warning("Failed to add auth_token column: %s", e)
+        try:
+            conn.execute(text("SELECT token_created_at FROM user_settings LIMIT 1"))
+        except Exception:
+            try:
+                conn.execute(text("ALTER TABLE user_settings ADD COLUMN token_created_at TIMESTAMP"))
+            except Exception as e:
+                logger.warning("Failed to add token_created_at column: %s", e)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -186,6 +204,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "📅 /today - Show today's macro stats\n"
         "🍽️ /yesterday <code>meal_description</code> - Log a meal for yesterday (e.g. `/yesterday 2 rotis, curd`)\n"
         "📊 /yesterday_summary - Show yesterday's macro stats\n"
+        "💻 /dashboard - View your fitness web dashboard\n"
         "🎯 /set_goal <code>calories</code> <code>protein</code> - Set daily targets (e.g. `/set_goal 2000 150`)\n"
         "⚖️ /track_weight <code>weight_in_kg</code> - Log/update daily weight (e.g. `/track_weight 75.5`)\n"
         "🗑️ /delete_meal - Delete a meal logged today\n"
@@ -421,6 +440,48 @@ def set_user_goals(user_id: int, calories: int | None, protein: int | None) -> N
             setting.calorie_goal = calories
             setting.protein_goal = protein
         session.commit()
+
+
+def generate_auth_token(user_id: int) -> str:
+    token = secrets.token_urlsafe(32)
+    with SessionLocal() as session:
+        setting = session.get(UserSetting, user_id)
+        if not setting:
+            setting = UserSetting(
+                telegram_user_id=user_id,
+                auth_token=token,
+                token_created_at=datetime.now(timezone.utc)
+            )
+            session.add(setting)
+        else:
+            setting.auth_token = token
+            setting.token_created_at = datetime.now(timezone.utc)
+        session.commit()
+    return token
+
+
+def validate_auth_token(token: str) -> int | None:
+    if not token:
+        return None
+    with SessionLocal() as session:
+        statement = select(UserSetting).where(UserSetting.auth_token == token)
+        setting = session.scalars(statement).first()
+        if setting and setting.token_created_at:
+            age = datetime.now(timezone.utc) - setting.token_created_at.astimezone(timezone.utc)
+            if age <= timedelta(minutes=5):
+                return setting.telegram_user_id
+    return None
+
+
+def get_user_by_session_token(token: str) -> int | None:
+    if not token:
+        return None
+    with SessionLocal() as session:
+        statement = select(UserSetting).where(UserSetting.auth_token == token)
+        setting = session.scalars(statement).first()
+        if setting:
+            return setting.telegram_user_id
+    return None
 
 
 def save_or_update_weight(user_id: int, weight: float, tz_name: str) -> bool:
@@ -1088,12 +1149,28 @@ async def yesterday_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     )
 
 
+async def dashboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    token = await asyncio.to_thread(generate_auth_token, user_id)
+    base_url = os.getenv("RENDER_EXTERNAL_URL", "http://localhost:10000").rstrip("/")
+    login_link = f"{base_url}/login?token={token}"
+
+    msg = (
+        "📊 *Your Fitness Web Dashboard*\n\n"
+        "Here is your secure, passwordless magic link to access your dashboard. "
+        "This link is valid for *5 minutes*.\n\n"
+        f"🔗 [Open Web Dashboard]({login_link})"
+    )
+    await update.message.reply_markdown(msg)
+
+
 async def post_init(application: Application) -> None:
     await application.bot.set_my_commands([
         BotCommand("start", "Start the bot and see instructions"),
         BotCommand("today", "Show today's macro stats"),
         BotCommand("yesterday", "Log a meal for yesterday (yesterday meal_description)"),
         BotCommand("yesterday_summary", "Show yesterday's macro stats"),
+        BotCommand("dashboard", "View your fitness web dashboard"),
         BotCommand("set_goal", "Set daily calorie/protein goals (calories protein)"),
         BotCommand("track_weight", "Log/update your weight for today (weight_in_kg)"),
         BotCommand("delete_meal", "Delete a meal logged today"),
@@ -1120,6 +1197,82 @@ async def keep_alive() -> None:
             logger.warning("Keep-alive ping failed: %s", e)
 
 
+def serve_login_error(message: str) -> str:
+    return f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Login Error - AI Meal Agent</title>
+        <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+        <style>
+            body {{
+                background-color: #0b0f19;
+                color: #f3f4f6;
+                font-family: 'Outfit', sans-serif;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                height: 100vh;
+                margin: 0;
+                padding: 20px;
+                box-sizing: border-box;
+            }}
+            .card {{
+                background: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                backdrop-filter: blur(16px);
+                border-radius: 24px;
+                padding: 40px;
+                max-width: 480px;
+                width: 100%;
+                text-align: center;
+                box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+            }}
+            .icon {{
+                font-size: 48px;
+                margin-bottom: 20px;
+            }}
+            h2 {{
+                color: #ef4444;
+                margin-top: 0;
+                font-weight: 700;
+            }}
+            p {{
+                color: #9ca3af;
+                font-size: 16px;
+                line-height: 1.6;
+                margin-bottom: 30px;
+            }}
+            .btn {{
+                display: inline-block;
+                background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+                color: white;
+                text-decoration: none;
+                padding: 12px 24px;
+                border-radius: 12px;
+                font-weight: 600;
+                transition: transform 0.2s, opacity 0.2s;
+            }}
+            .btn:hover {{
+                transform: translateY(-2px);
+                opacity: 0.95;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            <div class="icon">⚠️</div>
+            <h2>Authentication Failed</h2>
+            <p>{message}</p>
+            <a href="https://t.me/ai_meal_bot" class="btn">Open Telegram Bot</a>
+        </div>
+    </body>
+    </html>
+    """
+
+
 async def main_async() -> None:
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
@@ -1137,6 +1290,7 @@ async def main_async() -> None:
     app.add_handler(CommandHandler("today", today))
     app.add_handler(CommandHandler("yesterday", yesterday_command))
     app.add_handler(CommandHandler("yesterday_summary", yesterday_summary))
+    app.add_handler(CommandHandler("dashboard", dashboard_command))
     app.add_handler(CommandHandler("set_goal", set_goal))
     app.add_handler(CommandHandler("track_weight", track_weight))
     app.add_handler(CommandHandler("delete_meal", delete_meal_command))
@@ -1154,14 +1308,166 @@ async def main_async() -> None:
     # Start keep-alive loop
     asyncio.create_task(keep_alive())
 
-    # Start simple FastAPI for Render health checks
+    # Start FastAPI for Render health checks and Web Dashboard
     import uvicorn
-    from fastapi import FastAPI
-    web_app = FastAPI()
+    from fastapi import FastAPI, Cookie, Response, status
+    from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+    web_app = FastAPI(title="AI Meal Agent Web Dashboard")
 
-    @web_app.get("/")
+    @web_app.get("/login")
+    async def login(token: str | None = None):
+        if not token:
+            return HTMLResponse(
+                content=serve_login_error("No magic token provided. Please run `/dashboard` in your Telegram bot."),
+                status_code=400
+            )
+
+        user_id = await asyncio.to_thread(validate_auth_token, token)
+        if user_id is None:
+            return HTMLResponse(
+                content=serve_login_error("This magic link is invalid or has expired (valid for 5 minutes). Please run `/dashboard` in the Telegram bot to generate a new link."),
+                status_code=400
+            )
+
+        response = RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+        response.set_cookie(
+            key="session_token",
+            value=token,
+            max_age=30 * 24 * 60 * 60,  # 30 days
+            path="/",
+            samesite="lax",
+            httponly=True,
+            secure=False
+        )
+        return response
+
+    @web_app.get("/api/dashboard-data")
+    async def dashboard_data(session_token: str | None = Cookie(None)):
+        if not session_token:
+            return JSONResponse(content={"error": "Unauthorized"}, status_code=401)
+
+        user_id = await asyncio.to_thread(get_user_by_session_token, session_token)
+        if user_id is None:
+            return JSONResponse(content={"error": "Unauthorized"}, status_code=401)
+
+        # Get settings and goals
+        tz_name = await asyncio.to_thread(get_user_timezone_name, user_id)
+        cal_goal, prot_goal = await asyncio.to_thread(get_user_goals, user_id)
+
+        # Get username and weight details
+        def fetch_user_data():
+            with SessionLocal() as session:
+                stmt = select(MealLog).where(MealLog.telegram_user_id == user_id).order_by(MealLog.created_at.desc())
+                last_log = session.scalars(stmt).first()
+                username = last_log.telegram_username if last_log and last_log.telegram_username else "User"
+
+                user_tz = ZoneInfo(tz_name)
+                today_local = datetime.now(user_tz)
+                user_date = today_local.date()
+
+                weight_stmt = select(WeightLog).where(WeightLog.telegram_user_id == user_id).where(WeightLog.logged_date == user_date)
+                weight_record = session.scalars(weight_stmt).first()
+                today_w = weight_record.weight if weight_record else None
+
+                yesterday_date = user_date - timedelta(days=1)
+                weight_stmt_yest = select(WeightLog).where(WeightLog.telegram_user_id == user_id).where(WeightLog.logged_date == yesterday_date)
+                weight_record_yest = session.scalars(weight_stmt_yest).first()
+                yest_w = weight_record_yest.weight if weight_record_yest else None
+
+                return username, today_w, yest_w
+
+        username, today_weight, yest_weight = await asyncio.to_thread(fetch_user_data)
+
+        # Get daily logs
+        today_logs = await asyncio.to_thread(get_daily_logs, user_id, 0)
+        yest_logs = await asyncio.to_thread(get_daily_logs, user_id, -1)
+
+        def serialize_meal(log):
+            return {
+                "id": log.id,
+                "meal_text": log.meal_text,
+                "calories": log.calories,
+                "protein": log.protein,
+                "carbs": log.carbs,
+                "fat": log.fat,
+                "created_at": log.created_at.isoformat()
+            }
+
+        today_cal = sum(log.calories for log in today_logs)
+        today_prot = sum(log.protein for log in today_logs)
+        today_carbs = sum(log.carbs for log in today_logs)
+        today_fat = sum(log.fat for log in today_logs)
+
+        yest_cal = sum(log.calories for log in yest_logs)
+        yest_prot = sum(log.protein for log in yest_logs)
+        yest_carbs = sum(log.carbs for log in yest_logs)
+        yest_fat = sum(log.fat for log in yest_logs)
+
+        # Fetch 7 days history
+        user_tz = ZoneInfo(tz_name)
+        today_local = datetime.now(user_tz)
+
+        def fetch_history():
+            labels = []
+            cals = []
+            prots = []
+            for i in range(-6, 1):
+                date_val = (today_local + timedelta(days=i)).date()
+                day_label = date_val.strftime("%a %d/%m")
+                labels.append(day_label)
+
+                start, end = daily_bounds(tz_name, i)
+                with SessionLocal() as session:
+                    statement = (
+                        select(MealLog)
+                        .where(MealLog.telegram_user_id == user_id)
+                        .where(MealLog.created_at >= start)
+                        .where(MealLog.created_at <= end)
+                    )
+                    day_logs = session.scalars(statement).all()
+                    cals.append(sum(log.calories for log in day_logs))
+                    prots.append(sum(log.protein for log in day_logs))
+            return labels, cals, prots
+
+        history_labels, history_calories, history_protein = await asyncio.to_thread(fetch_history)
+
+        return JSONResponse(content={
+            "username": username,
+            "timezone": tz_name,
+            "goals": {
+                "calories": cal_goal,
+                "protein": prot_goal
+            },
+            "today": {
+                "calories": today_cal,
+                "protein": today_prot,
+                "carbs": today_carbs,
+                "fat": today_fat,
+                "weight": today_weight,
+                "meals": [serialize_meal(log) for log in today_logs]
+            },
+            "yesterday": {
+                "calories": yest_cal,
+                "protein": yest_prot,
+                "carbs": yest_carbs,
+                "fat": yest_fat,
+                "weight": yest_weight,
+                "meals": [serialize_meal(log) for log in yest_logs]
+            },
+            "weekly_history": {
+                "labels": history_labels,
+                "calories": history_calories,
+                "protein": history_protein
+            }
+        })
+
+    @web_app.get("/", response_class=HTMLResponse)
     def read_root():
-        return {"status": "ok", "bot": "running"}
+        try:
+            with open("index.html", "r", encoding="utf-8") as f:
+                return f.read()
+        except FileNotFoundError:
+            return serve_login_error("Dashboard index.html file not found in workspace.")
 
     config = uvicorn.Config(web_app, host="0.0.0.0", port=int(os.getenv("PORT", "10000")), log_level="warning")
     server = uvicorn.Server(config)
