@@ -198,12 +198,16 @@
             animation: fadeIn 0.6s ease-out;
         }
 
-        /* Header section */
         header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 40px;
+        }
+        .user-profile {
+            display: flex;
+            align-items: center;
+            gap: 16px;
         }
         .user-profile h1 {
             font-size: 28px;
@@ -215,10 +219,18 @@
             font-size: 14px;
             margin-top: 4px;
         }
-        .user-profile span {
-            color: var(--accent-cyan);
-            font-weight: 600;
+        .user-avatar {
+            width: 52px;
+            height: 52px;
+            border-radius: 50%;
+            border: 2px solid var(--accent-cyan);
+            box-shadow: 0 0 15px rgba(6, 182, 212, 0.25);
+            object-fit: cover;
+            transition: all 0.3s ease;
+            background: var(--box-bg);
         }
+
+
         .header-actions {
             display: flex;
             align-items: center;
@@ -280,7 +292,47 @@
             border-radius: 24px;
             padding: 28px;
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            position: relative;
+            overflow: hidden;
+            transition: transform 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
         }
+        .glass-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.3);
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+        body.light-theme .glass-card:hover {
+            border-color: rgba(0, 0, 0, 0.15);
+        }
+        .glass-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: transparent;
+            z-index: 2;
+        }
+        .glass-card.accent-macros::before {
+            background: linear-gradient(90deg, var(--accent-cyan), var(--accent-blue));
+        }
+        .glass-card.accent-history::before {
+            background: linear-gradient(90deg, var(--accent-green), var(--accent-cyan));
+        }
+        .glass-card.accent-workout::before {
+            background: linear-gradient(90deg, var(--accent-orange), var(--accent-pink));
+        }
+        .glass-card.accent-comparison::before {
+            background: linear-gradient(90deg, var(--accent-cyan), var(--accent-green));
+        }
+        .glass-card.accent-meals::before {
+            background: linear-gradient(90deg, var(--accent-pink), var(--accent-blue));
+        }
+        .glass-card.accent-motivation::before {
+            background: linear-gradient(90deg, var(--accent-cyan), var(--accent-orange));
+        }
+
         .card-title {
             font-size: 18px;
             font-weight: 600;
@@ -670,9 +722,13 @@
     <div id="dashboard-view">
         <header>
             <div class="user-profile">
-                <h1>Hello, <span id="display-username">User</span> 👋</h1>
-                <p>Timezone: <span id="display-timezone">Asia/Kolkata</span></p>
+                <img src="/api/profile-photo" class="user-avatar" alt="Avatar">
+                <div>
+                    <h1>Hello, <span id="display-username">User</span> 👋</h1>
+                    <p>Timezone: <span id="display-timezone">Asia/Kolkata</span></p>
+                </div>
             </div>
+
             <div class="header-actions">
                 <button class="btn-theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">
                     <span id="theme-icon">☀️</span>
@@ -685,7 +741,7 @@
         <!-- Main Dashboard Grid -->
         <div class="dashboard-grid">
             <!-- Today's Intake (Circular Progress Rings) -->
-            <div class="glass-card">
+            <div class="glass-card accent-macros">
                 <div class="card-title">Today's Macros Overview</div>
                 <div class="rings-row">
                     <!-- Calories Progress Ring -->
@@ -733,7 +789,7 @@
             </div>
 
             <!-- Historical Intake (7-day chart) -->
-            <div class="glass-card">
+            <div class="glass-card accent-history">
                 <div class="card-title">
                     <span>Last 7 Days Consumption</span>
                     <div class="chart-toggle-group">
@@ -750,7 +806,7 @@
 
         <div class="dashboard-grid">
             <!-- Today vs Yesterday Comparison -->
-            <div class="glass-card">
+            <div class="glass-card accent-comparison">
                 <div class="card-title">Macros Comparison</div>
                 <div class="compare-grid">
                     <div>
@@ -800,7 +856,7 @@
             </div>
 
             <!-- Recent Logged Meals List -->
-            <div class="glass-card">
+            <div class="glass-card accent-meals">
                 <div class="card-title">Recent Logged Meals</div>
                 <div class="meals-table-container">
                     <table>
@@ -825,7 +881,7 @@
         <!-- Workout & Consistency Grid -->
         <div class="dashboard-grid">
             <!-- Workout Streak & Gym Tracker -->
-            <div class="glass-card">
+            <div class="glass-card accent-workout">
                 <div class="card-title">Gym Workout & Consistency Tracker</div>
                 <div class="workout-container">
                     <div class="streak-badge-container" id="streak-container">
@@ -849,7 +905,7 @@
             </div>
 
             <!-- Vision / Motivation Card -->
-            <div class="glass-card" style="display: flex; flex-direction: column; justify-content: center; padding: 32px;">
+            <div class="glass-card accent-motivation" style="display: flex; flex-direction: column; justify-content: center; padding: 32px;">
                 <div class="card-title" style="margin-bottom: 16px;">Consistency is Key 🔑</div>
                 <p style="color: var(--text-secondary); font-size: 15px; line-height: 1.6; margin-bottom: 16px;">
                     Many people invest an incredible amount of time, money, and energy into their workouts and nutrition, yet fail to see results simply because they don't track their daily progress objectively.

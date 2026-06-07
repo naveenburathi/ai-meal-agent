@@ -1697,6 +1697,49 @@ async def main_async() -> None:
             "workout_max_streak": max_streak
         })
 
+    @web_app.get("/api/profile-photo")
+    async def profile_photo(session_token: str | None = Cookie(None)):
+        fallback_url = "https://api.dicebear.com/7.x/initials/svg?seed=User&backgroundType=gradientLinear&fontFamily=Arial,sans-serif"
+        if not session_token:
+            return RedirectResponse(url=fallback_url)
+        user_id = await asyncio.to_thread(get_user_by_session_token, session_token)
+        if user_id is None:
+            return RedirectResponse(url=fallback_url)
+
+        # Get username
+        username = "User"
+        with SessionLocal() as session:
+            last_log = session.scalars(
+                select(MealLog)
+                .where(MealLog.telegram_user_id == user_id)
+                .order_by(MealLog.created_at.desc())
+            ).first()
+            if last_log and last_log.telegram_username:
+                username = last_log.telegram_username
+
+        fallback_url = f"https://api.dicebear.com/7.x/initials/svg?seed={username}&backgroundType=gradientLinear&fontFamily=Arial,sans-serif"
+
+        try:
+            photos = await app.bot.get_user_profile_photos(user_id, limit=1)
+            if photos and photos.photos:
+                file_id = photos.photos[0][-1].file_id
+                file = await app.bot.get_file(file_id)
+                photo_url = file.file_path
+
+                # Fetch photo securely on server side (keeps token hidden from client)
+                def fetch_photo():
+                    req = urllib.request.Request(photo_url)
+                    with urllib.request.urlopen(req, timeout=10) as response:
+                        return response.read()
+
+                content = await asyncio.to_thread(fetch_photo)
+                return Response(content=content, media_type="image/jpeg")
+        except Exception as e:
+            logger.warning("Failed to fetch Telegram profile photo: %s", e)
+
+        return RedirectResponse(url=fallback_url)
+
+
 
     @web_app.get("/", response_class=HTMLResponse)
     def read_root():
