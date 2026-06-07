@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import DateTime, Integer, String, Text, create_engine, select, BigInteger
+from sqlalchemy import DateTime, Integer, String, Text, create_engine, select, BigInteger, Date, Float
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 from telegram import BotCommand, Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
@@ -109,6 +109,16 @@ class UserReminder(Base):
     reminder_time: Mapped[str] = mapped_column(String(5))  # "HH:MM" in 24-hour format
 
 
+class WeightLog(Base):
+    __tablename__ = "weight_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    weight: Mapped[float] = mapped_column(Float)
+    logged_date: Mapped[datetime] = mapped_column(Date, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///meals.db")
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 engine = create_engine(
@@ -175,6 +185,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "<b>Commands:</b>\n"
         "📅 /today - Show today's macro stats\n"
         "🎯 /set_goal <code>calories</code> <code>protein</code> - Set daily targets (e.g. `/set_goal 2000 150`)\n"
+        "⚖️ /track_weight <code>weight_in_kg</code> - Log/update daily weight (e.g. `/track_weight 75.5`)\n"
         "🗑️ /delete_meal - Delete a meal logged today\n"
         "⏰ /reminders - View your active reminders\n"
         "🔔 /set_reminder <code>HH:MM</code> - Add a reminder (24-hour format, e.g. `/set_reminder 08:30`)\n"
@@ -381,6 +392,35 @@ def set_user_goals(user_id: int, calories: int | None, protein: int | None) -> N
             setting.calorie_goal = calories
             setting.protein_goal = protein
         session.commit()
+
+
+def save_or_update_weight(user_id: int, weight: float, tz_name: str) -> bool:
+    from datetime import date
+    user_tz = ZoneInfo(tz_name)
+    user_date = datetime.now(user_tz).date()
+
+    with SessionLocal() as session:
+        statement = (
+            select(WeightLog)
+            .where(WeightLog.telegram_user_id == user_id)
+            .where(WeightLog.logged_date == user_date)
+        )
+        existing = session.scalar(statement)
+        if existing:
+            existing.weight = weight
+            existing.created_at = datetime.now(timezone.utc)
+            session.commit()
+            return True
+        else:
+            new_log = WeightLog(
+                telegram_user_id=user_id,
+                weight=weight,
+                logged_date=user_date,
+                created_at=datetime.now(timezone.utc)
+            )
+            session.add(new_log)
+            session.commit()
+            return False
 
 
 def get_next_reminder_time(user_id: int, current_time_str: str) -> str | None:
@@ -733,12 +773,13 @@ async def list_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def set_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     args = context.args
     if len(args) < 1 or len(args) > 2:
-        await update.message.reply_text(
-            "Usage:\n"
-            "• To add: /set_reminder <HH:MM> (e.g., /set_reminder 09:30)\n"
-            "• To remove: /set_reminder <HH:MM> off (e.g., /set_reminder 09:30 off)\n"
-            "Note: Please use 24-hour format (00:00 to 23:59)."
+        msg = (
+            "⏰ *Set Reminder*\n\n"
+            "Please provide a time in 24-hour format (HH:MM).\n"
+            "Tap the command below to copy, edit the time, and send:\n"
+            "`/set_reminder 08:30`"
         )
+        await update.message.reply_markdown(msg)
         return
 
     time_str = args[0].strip()
@@ -811,11 +852,13 @@ async def set_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def set_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     args = context.args
     if len(args) != 1:
-        await update.message.reply_text(
-            "Usage: /timezone <timezone_name>\n"
-            "Example: /timezone Asia/Kolkata\n"
-            "Example: /timezone America/New_York"
+        msg = (
+            "🌐 *Set Timezone*\n\n"
+            "Please provide your timezone name.\n"
+            "Tap the command below to copy, edit the timezone, and send:\n"
+            "`/timezone Asia/Kolkata`"
         )
+        await update.message.reply_markdown(msg)
         return
 
     tz_name = args[0].strip()
@@ -895,11 +938,46 @@ async def set_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def track_weight(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    args = context.args
+    user_id = update.effective_user.id
+
+    if not args:
+        msg = (
+            "⚖️ *Weight Tracker*\n\n"
+            "Please provide your weight in kg.\n"
+            "Tap the command below to copy, edit your weight, and send:\n"
+            "`/track_weight 75.5`"
+        )
+        await update.message.reply_markdown(msg)
+        return
+
+    weight_str = args[0].strip()
+    try:
+        weight = float(weight_str)
+        if weight <= 0:
+            raise ValueError()
+    except ValueError:
+        await update.message.reply_text(
+            "Invalid value. Please provide a positive number for weight (e.g. 75.5)."
+        )
+        return
+
+    tz_name = await asyncio.to_thread(get_user_timezone_name, user_id)
+    updated = await asyncio.to_thread(save_or_update_weight, user_id, weight, tz_name)
+
+    if updated:
+        await update.message.reply_text(f"Updated weight: {weight} kg for today.")
+    else:
+        await update.message.reply_text(f"Logged weight: {weight} kg for today.")
+
+
 async def post_init(application: Application) -> None:
     await application.bot.set_my_commands([
         BotCommand("start", "Start the bot and see instructions"),
         BotCommand("today", "Show today's macro stats"),
         BotCommand("set_goal", "Set daily calorie/protein goals (calories protein)"),
+        BotCommand("track_weight", "Log/update your weight for today (weight_in_kg)"),
         BotCommand("delete_meal", "Delete a meal logged today"),
         BotCommand("reminders", "View your active reminders"),
         BotCommand("set_reminder", "Add/remove reminder time (HH:MM [off])"),
@@ -940,6 +1018,7 @@ async def main_async() -> None:
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("today", today))
     app.add_handler(CommandHandler("set_goal", set_goal))
+    app.add_handler(CommandHandler("track_weight", track_weight))
     app.add_handler(CommandHandler("delete_meal", delete_meal_command))
     app.add_handler(CommandHandler("reminders", list_reminders))
     app.add_handler(CommandHandler("set_reminder", set_reminder))
