@@ -185,6 +185,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "<b>Commands:</b>\n"
         "📅 /today - Show today's macro stats\n"
         "🍽️ /yesterday <code>meal_description</code> - Log a meal for yesterday (e.g. `/yesterday 2 rotis, curd`)\n"
+        "📊 /yesterday_summary - Show yesterday's macro stats\n"
         "🎯 /set_goal <code>calories</code> <code>protein</code> - Set daily targets (e.g. `/set_goal 2000 150`)\n"
         "⚖️ /track_weight <code>weight_in_kg</code> - Log/update daily weight (e.g. `/track_weight 75.5`)\n"
         "🗑️ /delete_meal - Delete a meal logged today\n"
@@ -329,10 +330,13 @@ def get_today_logs(user_id: int) -> list[MealLog]:
 def format_daily_stats(
     logs: list[MealLog],
     calorie_goal: int | None = None,
-    protein_goal: int | None = None
+    protein_goal: int | None = None,
+    empty_message: str = "No meals logged today yet.",
+    title: str = "Today Summary 📅",
+    progress_title: str = "Daily Progress"
 ) -> str:
     if not logs and calorie_goal is None and protein_goal is None:
-        return "No meals logged today yet."
+        return empty_message
 
     calories = sum(log.calories for log in logs) if logs else 0
     protein = sum(log.protein for log in logs) if logs else 0
@@ -340,7 +344,7 @@ def format_daily_stats(
     fat = sum(log.fat for log in logs) if logs else 0
 
     lines = [
-        "<b>Today Summary 📅</b>",
+        f"<b>{title}</b>",
         f"Meals logged: {len(logs)}",
         f"Calories: ~{calories} kcal",
         f"Protein: ~{protein}g",
@@ -350,7 +354,7 @@ def format_daily_stats(
 
     if calorie_goal is not None or protein_goal is not None:
         lines.append("")
-        lines.append("<b>Daily Progress:</b>")
+        lines.append(f"<b>{progress_title}:</b>")
         if calorie_goal is not None:
             remaining_cal = calorie_goal - calories
             if remaining_cal >= 0:
@@ -686,6 +690,23 @@ async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cal_goal, prot_goal = await asyncio.to_thread(get_user_goals, user_id)
     await update.message.reply_text(
         format_daily_stats(logs, calorie_goal=cal_goal, protein_goal=prot_goal),
+        parse_mode="HTML"
+    )
+
+
+async def yesterday_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    logs = await asyncio.to_thread(get_daily_logs, user_id, days_offset=-1)
+    cal_goal, prot_goal = await asyncio.to_thread(get_user_goals, user_id)
+    await update.message.reply_text(
+        format_daily_stats(
+            logs,
+            calorie_goal=cal_goal,
+            protein_goal=prot_goal,
+            empty_message="No meals logged yesterday.",
+            title="Yesterday Summary 📅",
+            progress_title="Yesterday's Progress"
+        ),
         parse_mode="HTML"
     )
 
@@ -1053,6 +1074,7 @@ async def post_init(application: Application) -> None:
         BotCommand("start", "Start the bot and see instructions"),
         BotCommand("today", "Show today's macro stats"),
         BotCommand("yesterday", "Log a meal for yesterday (yesterday meal_description)"),
+        BotCommand("yesterday_summary", "Show yesterday's macro stats"),
         BotCommand("set_goal", "Set daily calorie/protein goals (calories protein)"),
         BotCommand("track_weight", "Log/update your weight for today (weight_in_kg)"),
         BotCommand("delete_meal", "Delete a meal logged today"),
@@ -1095,6 +1117,7 @@ async def main_async() -> None:
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("today", today))
     app.add_handler(CommandHandler("yesterday", yesterday_command))
+    app.add_handler(CommandHandler("yesterday_summary", yesterday_summary))
     app.add_handler(CommandHandler("set_goal", set_goal))
     app.add_handler(CommandHandler("track_weight", track_weight))
     app.add_handler(CommandHandler("delete_meal", delete_meal_command))
