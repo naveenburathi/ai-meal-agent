@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import DateTime, Integer, String, Text, create_engine, select, BigInteger, Date, Float, text
+from sqlalchemy import DateTime, Integer, String, Text, create_engine, select, BigInteger, Date, Float, text, inspect
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 from telegram import BotCommand, Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
@@ -178,17 +178,15 @@ class MealEstimate(BaseModel):
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
+    inspector = inspect(engine)
+    columns = [col["name"] for col in inspector.get_columns("user_settings")]
     with engine.begin() as conn:
-        try:
-            conn.execute(text("SELECT auth_token FROM user_settings LIMIT 1"))
-        except Exception:
+        if "auth_token" not in columns:
             try:
                 conn.execute(text("ALTER TABLE user_settings ADD COLUMN auth_token VARCHAR(100)"))
             except Exception as e:
                 logger.warning("Failed to add auth_token column: %s", e)
-        try:
-            conn.execute(text("SELECT token_created_at FROM user_settings LIMIT 1"))
-        except Exception:
+        if "token_created_at" not in columns:
             try:
                 conn.execute(text("ALTER TABLE user_settings ADD COLUMN token_created_at TIMESTAMP"))
             except Exception as e:
