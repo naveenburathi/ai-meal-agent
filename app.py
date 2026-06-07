@@ -97,6 +97,8 @@ class UserSetting(Base):
 
     telegram_user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     timezone: Mapped[str] = mapped_column(String(100), default="Asia/Kolkata")
+    calorie_goal: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    protein_goal: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class UserReminder(Base):
@@ -172,6 +174,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "and I will estimate and track your calories and protein.\n\n"
         "<b>Commands:</b>\n"
         "📅 /today - Show today's macro stats\n"
+        "🎯 /set_goal <code>calories</code> <code>protein</code> - Set daily targets (e.g. `/set_goal 2000 150`)\n"
         "🗑️ /delete_meal - Delete a meal logged today\n"
         "⏰ /reminders - View your active reminders\n"
         "🔔 /set_reminder <code>HH:MM</code> - Add a reminder (24-hour format, e.g. `/set_reminder 08:30`)\n"
@@ -211,7 +214,13 @@ def calibrate_estimate(estimate: MealEstimate) -> MealEstimate:
     return estimate
 
 
-def format_estimate(estimate: MealEstimate) -> str:
+def format_estimate(
+    estimate: MealEstimate,
+    daily_total_calories: int = 0,
+    daily_total_protein: int = 0,
+    calorie_goal: int | None = None,
+    protein_goal: int | None = None
+) -> str:
     lines = [
         "Meal logged ✅",
         f"Calories: ~{estimate.total_calories} kcal",
@@ -219,6 +228,26 @@ def format_estimate(estimate: MealEstimate) -> str:
         f"Carbs: ~{estimate.total_carbs}g",
         f"Fat: ~{estimate.total_fat}g",
     ]
+
+    # Add remaining calorie/protein targets if goals are set
+    if calorie_goal is not None or protein_goal is not None:
+        lines.append("")
+        lines.append("<b>Daily Progress:</b>")
+        if calorie_goal is not None:
+            remaining_cal = calorie_goal - daily_total_calories
+            if remaining_cal >= 0:
+                cal_status = f" ({remaining_cal} kcal remaining)"
+            else:
+                cal_status = f" (exceeded by {abs(remaining_cal)} kcal)"
+            lines.append(f"• Calories: {daily_total_calories} / {calorie_goal} kcal{cal_status}")
+
+        if protein_goal is not None:
+            remaining_prot = protein_goal - daily_total_protein
+            if remaining_prot >= 0:
+                prot_status = f" ({remaining_prot}g remaining)"
+            else:
+                prot_status = f" (exceeded by {abs(remaining_prot)}g)"
+            lines.append(f"• Protein: {daily_total_protein} / {protein_goal}g{prot_status}")
 
     if estimate.foods:
         lines.append("")
@@ -308,6 +337,26 @@ def set_user_timezone(user_id: int, tz_name: str) -> None:
             session.add(setting)
         else:
             setting.timezone = tz_name
+        session.commit()
+
+
+def get_user_goals(user_id: int) -> tuple[int | None, int | None]:
+    with SessionLocal() as session:
+        setting = session.get(UserSetting, user_id)
+        if setting:
+            return setting.calorie_goal, setting.protein_goal
+        return None, None
+
+
+def set_user_goals(user_id: int, calories: int | None, protein: int | None) -> None:
+    with SessionLocal() as session:
+        setting = session.get(UserSetting, user_id)
+        if not setting:
+            setting = UserSetting(telegram_user_id=user_id, calorie_goal=calories, protein_goal=protein)
+            session.add(setting)
+        else:
+            setting.calorie_goal = calories
+            setting.protein_goal = protein
         session.commit()
 
 
@@ -534,7 +583,23 @@ async def handle_meal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     await asyncio.to_thread(save_meal_log, update.effective_user, text, estimate)
-    await update.message.reply_text(format_estimate(estimate))
+
+    user_id = update.effective_user.id
+    cal_goal, prot_goal = await asyncio.to_thread(get_user_goals, user_id)
+    logs = await asyncio.to_thread(get_today_logs, user_id)
+    daily_calories = sum(log.calories for log in logs)
+    daily_protein = sum(log.protein for log in logs)
+
+    await update.message.reply_text(
+        format_estimate(
+            estimate,
+            daily_total_calories=daily_calories,
+            daily_total_protein=daily_protein,
+            calorie_goal=cal_goal,
+            protein_goal=prot_goal
+        ),
+        parse_mode="HTML"
+    )
 
 
 async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -744,9 +809,68 @@ async def set_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(f"Your timezone has been updated to {tz_name}. Existing reminders rescheduled.")
 
 
+async def set_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    args = context.args
+    user_id = update.effective_user.id
+
+    if not args:
+        cal_goal, prot_goal = await asyncio.to_thread(get_user_goals, user_id)
+        if cal_goal is None and prot_goal is None:
+            msg = (
+                "No daily goals set yet.\n\n"
+                "Use `/set_goal <calories> <protein>` to set your daily target.\n"
+                "Example: `/set_goal 2000 150`\n"
+                "To remove your goals, use `/set_goal off`"
+            )
+        else:
+            msg = (
+                "🎯 *Current Daily Goals:*\n"
+                f"• Calories: `{cal_goal}` kcal\n"
+                f"• Protein: `{prot_goal}`g\n\n"
+                "To change: `/set_goal <calories> <protein>`\n"
+                "To remove: `/set_goal off`"
+            )
+        await update.message.reply_markdown(msg)
+        return
+
+    action = args[0].strip().lower()
+    if action == "off":
+        await asyncio.to_thread(set_user_goals, user_id, None, None)
+        await update.message.reply_text("Your daily goals have been removed.")
+        return
+
+    if len(args) != 2:
+        await update.message.reply_text(
+            "Usage:\n"
+            "• To set: /set_goal <calories> <protein> (e.g., /set_goal 2000 150)\n"
+            "• To remove: /set_goal off\n"
+            "• To view: /set_goal"
+        )
+        return
+
+    try:
+        calories = int(args[0].strip())
+        protein = int(args[1].strip())
+        if calories <= 0 or protein <= 0:
+            raise ValueError()
+    except ValueError:
+        await update.message.reply_text(
+            "Invalid values. Calories and protein must be positive integers."
+        )
+        return
+
+    await asyncio.to_thread(set_user_goals, user_id, calories, protein)
+    await update.message.reply_text(
+        f"Daily goals set successfully:\n"
+        f"• Calories: {calories} kcal\n"
+        f"• Protein: {protein}g"
+    )
+
+
 async def post_init(application: Application) -> None:
     await application.bot.set_my_commands([
         BotCommand("today", "Show today's macro stats"),
+        BotCommand("set_goal", "Set daily calorie/protein goals (calories protein)"),
         BotCommand("delete_meal", "Delete a meal logged today"),
         BotCommand("reminders", "View your active reminders"),
         BotCommand("set_reminder", "Add/remove reminder time (HH:MM [off])"),
@@ -786,6 +910,7 @@ async def main_async() -> None:
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("today", today))
+    app.add_handler(CommandHandler("set_goal", set_goal))
     app.add_handler(CommandHandler("delete_meal", delete_meal_command))
     app.add_handler(CommandHandler("reminders", list_reminders))
     app.add_handler(CommandHandler("set_reminder", set_reminder))
