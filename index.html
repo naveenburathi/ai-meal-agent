@@ -1344,10 +1344,23 @@
             const textSecondary = isLight ? '#4b5563' : '#9ca3af';
             const gridColor = isLight ? 'rgba(0, 0, 0, 0.05)' : 'rgba(255, 255, 255, 0.04)';
 
+            // Filter out days where weight wasn't logged
+            const filteredLabels = [];
+            const filteredWeights = [];
+            
+            if (history && history.weights && history.labels) {
+                for (let i = 0; i < history.weights.length; i++) {
+                    if (history.weights[i] !== null && history.weights[i] !== undefined) {
+                        filteredLabels.push(history.labels[i]);
+                        filteredWeights.push(history.weights[i]);
+                    }
+                }
+            }
+
             const datasets = [
                 {
                     label: 'Weight (kg)',
-                    data: history.weights,
+                    data: filteredWeights,
                     backgroundColor: 'rgba(236, 72, 153, 0.08)',
                     borderColor: '#ec4899',
                     borderWidth: 2.5,
@@ -1363,7 +1376,7 @@
             window.weightChart = new Chart(ctx, {
                 type: 'line',
                 data: {
-                    labels: history.labels,
+                    labels: filteredLabels,
                     datasets: datasets
                 },
                 options: {
