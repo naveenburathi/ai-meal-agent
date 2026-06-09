@@ -102,6 +102,8 @@ class UserSetting(Base):
     protein_goal: Mapped[int | None] = mapped_column(Integer, nullable=True)
     auth_token: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
     token_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    user_tier: Mapped[str] = mapped_column(String(20), default="Basic")
+    passcode: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
 
 class UserReminder(Base):
@@ -201,6 +203,34 @@ def init_db() -> None:
                 conn.execute(text("ALTER TABLE user_settings ADD COLUMN token_created_at TIMESTAMP"))
             except Exception as e:
                 logger.warning("Failed to add token_created_at column: %s", e)
+        if "user_tier" not in columns:
+            try:
+                conn.execute(text("ALTER TABLE user_settings ADD COLUMN user_tier VARCHAR(20) DEFAULT 'Basic'"))
+            except Exception as e:
+                logger.warning("Failed to add user_tier column: %s", e)
+        if "passcode" not in columns:
+            try:
+                conn.execute(text("ALTER TABLE user_settings ADD COLUMN passcode VARCHAR(100)"))
+            except Exception as e:
+                logger.warning("Failed to add passcode column: %s", e)
+        
+        # Seed user 858488480 as Admin
+        try:
+            conn.execute(
+                text(
+                    "INSERT INTO user_settings (telegram_user_id, timezone, user_tier) "
+                    "VALUES (:user_id, :tz, :tier) "
+                    "ON CONFLICT(telegram_user_id) DO UPDATE SET user_tier = :tier"
+                ),
+                {"user_id": 858488480, "tz": "Asia/Kolkata", "tier": "Admin"}
+            )
+        except Exception as e:
+            try:
+                conn.execute(
+                    text("UPDATE user_settings SET user_tier = 'Admin' WHERE telegram_user_id = 858488480")
+                )
+            except Exception as ex:
+                logger.warning("Failed to seed Admin user: %s", ex)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -759,7 +789,8 @@ def ensure_user_initialized(job_queue, user_id: int) -> None:
     with SessionLocal() as session:
         setting = session.get(UserSetting, user_id)
         if not setting:
-            setting = UserSetting(telegram_user_id=user_id, timezone="Asia/Kolkata")
+            tier = "Admin" if user_id == 858488480 else "Basic"
+            setting = UserSetting(telegram_user_id=user_id, timezone="Asia/Kolkata", user_tier=tier)
             session.add(setting)
             session.commit()
             if job_queue:
@@ -1181,6 +1212,47 @@ async def set_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(f"Your timezone has been updated to {tz_name}. Existing reminders rescheduled.")
 
 
+async def set_passcode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    args = context.args
+    if len(args) != 1:
+        msg = (
+            "🔑 *Set Web Dashboard Passcode*\n\n"
+            "Configure a passcode to log in directly on the website without opening Telegram.\n"
+            "Tap the command below to copy, edit the passcode, and send:\n"
+            "`/set_passcode my_secret_passcode`"
+        )
+        await update.message.reply_markdown(msg)
+        return
+
+    new_passcode = args[0].strip()
+    if len(new_passcode) < 4:
+        await update.message.reply_text("Passcode must be at least 4 characters long.")
+        return
+
+    user_id = update.effective_user.id
+
+    def save_passcode():
+        with SessionLocal() as session:
+            setting = session.get(UserSetting, user_id)
+            if not setting:
+                setting = UserSetting(telegram_user_id=user_id, timezone="Asia/Kolkata", passcode=new_passcode)
+                session.add(setting)
+            else:
+                setting.passcode = new_passcode
+            session.commit()
+
+    await asyncio.to_thread(save_passcode)
+    await update.message.reply_text(
+        f"✅ Passcode updated successfully!\n\n"
+        f"You can now log in directly on the dashboard website using:\n"
+        f"• *User ID:* `{user_id}`\n"
+        f"• *Passcode:* (the passcode you just set)\n\n"
+        f"Keep this passcode secure!",
+        parse_mode="Markdown"
+    )
+
+
+
 async def set_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     args = context.args
     user_id = update.effective_user.id
@@ -1350,20 +1422,29 @@ async def dashboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 async def post_init(application: Application) -> None:
-    await application.bot.set_my_commands([
-        BotCommand("start", "Start the bot and see instructions"),
-        BotCommand("today", "Show today's macro stats"),
-        BotCommand("yesterday", "Log a meal for yesterday (yesterday meal_description)"),
-        BotCommand("yesterday_summary", "Show yesterday's macro stats"),
-        BotCommand("dashboard", "View your fitness web dashboard"),
-        BotCommand("set_goal", "Set daily calorie/protein goals (calories protein)"),
-        BotCommand("track_weight", "Log/update your weight for today (weight_in_kg)"),
-        BotCommand("delete_meal", "Delete a meal logged today"),
-        BotCommand("reminders", "View your active reminders"),
-        BotCommand("set_reminder", "Add/remove reminder time (HH:MM [off])"),
-        BotCommand("timezone", "Set your local timezone"),
-        BotCommand("help", "Show help instructions"),
-    ])
+    logger.info("Initializing post_init: Setting bot commands...")
+    try:
+        commands = [
+            BotCommand("start", "Start the bot and see instructions"),
+            BotCommand("today", "Show today's macro stats"),
+            BotCommand("yesterday", "Log a meal for yesterday (yesterday meal_description)"),
+            BotCommand("yesterday_summary", "Show yesterday's macro stats"),
+            BotCommand("dashboard", "View your fitness web dashboard"),
+            BotCommand("set_goal", "Set daily calorie/protein goals (calories protein)"),
+            BotCommand("track_weight", "Log/update your weight for today (weight_in_kg)"),
+            BotCommand("delete_meal", "Delete a meal logged today"),
+            BotCommand("reminders", "View your active reminders"),
+            BotCommand("set_reminder", "Add/remove reminder time (HH:MM [off])"),
+            BotCommand("timezone", "Set your local timezone"),
+            BotCommand("set_passcode", "Set dashboard access passcode (passcode)"),
+            BotCommand("help", "Show help instructions"),
+        ]
+        logger.info("Sending %d commands to Telegram's set_my_commands API...", len(commands))
+        await application.bot.set_my_commands(commands)
+        logger.info("Bot commands successfully registered with Telegram Father.")
+    except Exception as e:
+        logger.error("Failed to register bot commands with Telegram: %s", e, exc_info=True)
+
 
 
 async def keep_alive() -> None:
@@ -1487,6 +1568,7 @@ async def main_async() -> None:
     app.add_handler(CommandHandler("reminders", list_reminders))
     app.add_handler(CommandHandler("set_reminder", set_reminder))
     app.add_handler(CommandHandler("timezone", set_timezone))
+    app.add_handler(CommandHandler("set_passcode", set_passcode))
     app.add_handler(CallbackQueryHandler(delete_meal_callback, pattern="^del_meal:"))
     app.add_handler(CallbackQueryHandler(workout_poll_callback, pattern="^workout:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_meal))
@@ -1543,7 +1625,7 @@ async def main_async() -> None:
         return response
 
     @web_app.get("/api/dashboard-data")
-    async def dashboard_data(session_token: str | None = Cookie(None)):
+    async def dashboard_data(days: int = 7, session_token: str | None = Cookie(None)):
         if not session_token:
             return JSONResponse(content={"error": "Unauthorized"}, status_code=401)
 
@@ -1575,9 +1657,33 @@ async def main_async() -> None:
                 weight_record_yest = session.scalars(weight_stmt_yest).first()
                 yest_w = weight_record_yest.weight if weight_record_yest else None
 
-                return username, today_w, yest_w
+                # Find oldest meal log to calculate available days
+                oldest_stmt = select(MealLog.created_at).where(MealLog.telegram_user_id == user_id).order_by(MealLog.created_at.asc()).limit(1)
+                oldest_dt = session.scalars(oldest_stmt).first()
+                
+                # Check workout log as well
+                oldest_workout_stmt = select(WorkoutLog.logged_date).where(WorkoutLog.telegram_user_id == user_id).order_by(WorkoutLog.logged_date.asc()).limit(1)
+                oldest_workout_date = session.scalars(oldest_workout_stmt).first()
 
-        username, today_weight, yest_weight = await asyncio.to_thread(fetch_user_data)
+                oldest_date = None
+                if oldest_dt:
+                    if oldest_dt.tzinfo is None:
+                        oldest_dt = oldest_dt.replace(tzinfo=timezone.utc)
+                    oldest_date = oldest_dt.astimezone(user_tz).date()
+
+                if oldest_workout_date:
+                    if oldest_date is None or oldest_workout_date < oldest_date:
+                        oldest_date = oldest_workout_date
+
+                if oldest_date:
+                    diff_days = (user_date - oldest_date).days + 1
+                    max_available_days = max(7, diff_days)
+                else:
+                    max_available_days = 7
+
+                return username, today_w, yest_w, max_available_days
+
+        username, today_weight, yest_weight, max_available_days = await asyncio.to_thread(fetch_user_data)
 
         # Get daily logs
         today_logs = await asyncio.to_thread(get_daily_logs, user_id, 0)
@@ -1604,15 +1710,17 @@ async def main_async() -> None:
         yest_carbs = sum(log.carbs for log in yest_logs)
         yest_fat = sum(log.fat for log in yest_logs)
 
-        # Fetch 7 days history
+        # Fetch history for requested number of days
         user_tz = ZoneInfo(tz_name)
         today_local = datetime.now(user_tz)
+        days_to_fetch = max(7, min(days, max_available_days))
 
-        def fetch_history():
+        def fetch_history(num_days):
             labels = []
             cals = []
             prots = []
-            for i in range(-6, 1):
+            weights = []
+            for i in range(-(num_days - 1), 1):
                 date_val = (today_local + timedelta(days=i)).date()
                 day_label = date_val.strftime("%a %d/%m")
                 labels.append(day_label)
@@ -1628,9 +1736,25 @@ async def main_async() -> None:
                     day_logs = session.scalars(statement).all()
                     cals.append(sum(log.calories for log in day_logs))
                     prots.append(sum(log.protein for log in day_logs))
-            return labels, cals, prots
 
-        history_labels, history_calories, history_protein = await asyncio.to_thread(fetch_history)
+                    # Query weight for this specific day
+                    w_statement = (
+                        select(WeightLog)
+                        .where(WeightLog.telegram_user_id == user_id)
+                        .where(WeightLog.logged_date == date_val)
+                    )
+                    w_log = session.scalars(w_statement).first()
+                    weights.append(w_log.weight if w_log else None)
+            return labels, cals, prots, weights
+
+        history_labels, history_calories, history_protein, history_weights = await asyncio.to_thread(fetch_history, days_to_fetch)
+
+        def get_user_tier(uid):
+            with SessionLocal() as session:
+                s = session.get(UserSetting, uid)
+                return s.user_tier if s else "Basic"
+
+        user_tier = await asyncio.to_thread(get_user_tier, user_id)
 
         user_tz = ZoneInfo(tz_name)
         today_date = datetime.now(user_tz).date()
@@ -1640,6 +1764,7 @@ async def main_async() -> None:
         return JSONResponse(content={
             "username": username,
             "timezone": tz_name,
+            "user_tier": user_tier,
             "goals": {
                 "calories": cal_goal,
                 "protein": prot_goal
@@ -1663,8 +1788,10 @@ async def main_async() -> None:
             "weekly_history": {
                 "labels": history_labels,
                 "calories": history_calories,
-                "protein": history_protein
+                "protein": history_protein,
+                "weights": history_weights
             },
+            "max_available_days": max_available_days,
             "workout_today": workout_today,
             "workout_streak": workout_streak,
             "workout_max_streak": workout_max_streak
@@ -1696,6 +1823,85 @@ async def main_async() -> None:
             "workout_streak": current_streak,
             "workout_max_streak": max_streak
         })
+
+    class DirectLoginRequest(BaseModel):
+        username_or_id: str
+        passcode: str
+
+    @web_app.post("/api/login")
+    async def direct_login(req: DirectLoginRequest):
+        username_or_id = req.username_or_id.strip()
+        passcode_val = req.passcode.strip()
+
+        if not username_or_id or not passcode_val:
+            return JSONResponse(content={"error": "Username/ID and passcode are required"}, status_code=400)
+
+        user_id = None
+        if username_or_id.isdigit():
+            user_id = int(username_or_id)
+        else:
+            clean_username = username_or_id.lstrip("@")
+            def find_user_by_username():
+                with SessionLocal() as session:
+                    log = session.scalars(
+                        select(MealLog)
+                        .where(MealLog.telegram_username.ilike(clean_username))
+                        .order_by(MealLog.created_at.desc())
+                        .limit(1)
+                    ).first()
+                    return log.telegram_user_id if log else None
+            user_id = await asyncio.to_thread(find_user_by_username)
+
+        if not user_id:
+            return JSONResponse(content={"error": "User not found. Try entering your numeric Telegram User ID."}, status_code=404)
+
+        def verify_and_get_token():
+            with SessionLocal() as session:
+                setting = session.get(UserSetting, user_id)
+                if not setting or not setting.passcode:
+                    return None
+                if setting.passcode == passcode_val:
+                    token = secrets.token_urlsafe(32)
+                    setting.auth_token = token
+                    setting.token_created_at = datetime.now(timezone.utc)
+                    session.commit()
+                    return token
+                return None
+
+        token = await asyncio.to_thread(verify_and_get_token)
+        if not token:
+            return JSONResponse(content={"error": "Invalid passcode or passcode not configured via Telegram /set_passcode yet."}, status_code=401)
+
+        response = JSONResponse(content={"status": "success", "message": "Login successful"})
+        response.set_cookie(
+            key="session_token",
+            value=token,
+            max_age=30 * 24 * 60 * 60,
+            path="/",
+            samesite="lax",
+            httponly=True,
+            secure=False
+        )
+        return response
+
+    class WeightUpdateRequest(BaseModel):
+        weight: float
+
+    @web_app.post("/api/weight")
+    async def update_weight(req: WeightUpdateRequest, session_token: str | None = Cookie(None)):
+        if not session_token:
+            return JSONResponse(content={"error": "Unauthorized"}, status_code=401)
+        user_id = await asyncio.to_thread(get_user_by_session_token, session_token)
+        if user_id is None:
+            return JSONResponse(content={"error": "Unauthorized"}, status_code=401)
+
+        if req.weight <= 0:
+            return JSONResponse(content={"error": "Weight must be a positive number"}, status_code=400)
+
+        tz_name = await asyncio.to_thread(get_user_timezone_name, user_id)
+        await asyncio.to_thread(save_or_update_weight, user_id, req.weight, tz_name)
+
+        return JSONResponse(content={"status": "success", "weight": req.weight})
 
     @web_app.get("/api/profile-photo")
     async def profile_photo(session_token: str | None = Cookie(None)):

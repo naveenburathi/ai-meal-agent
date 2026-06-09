@@ -675,6 +675,131 @@
             color: var(--text-primary);
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
         }
+        /* Timeframe Select Styling */
+        .timeframe-select {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--card-border);
+            color: var(--text-primary);
+            padding: 6px 12px;
+            font-size: 12px;
+            font-weight: 600;
+            font-family: 'Outfit', sans-serif;
+            border-radius: 10px;
+            cursor: pointer;
+            outline: none;
+            transition: all 0.2s ease;
+        }
+        .timeframe-select:hover {
+            background: rgba(255, 255, 255, 0.08);
+        }
+        .timeframe-select option {
+            background: #080b11;
+            color: #f3f4f6;
+        }
+        body.light-theme .timeframe-select option {
+            background: #f3f4f6;
+            color: #111827;
+        }
+        /* User Tier Badges */
+        .tier-badge {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            padding: 2px 8px;
+            border-radius: 6px;
+            letter-spacing: 0.5px;
+            display: inline-block;
+            vertical-align: middle;
+        }
+        .tier-badge.basic {
+            background: rgba(156, 163, 175, 0.15);
+            color: var(--text-secondary);
+            border: 1px solid rgba(156, 163, 175, 0.2);
+        }
+        .tier-badge.premium {
+            background: rgba(6, 182, 212, 0.15);
+            color: var(--accent-cyan);
+            border: 1px solid rgba(6, 182, 212, 0.3);
+            box-shadow: 0 0 10px rgba(6, 182, 212, 0.1);
+        }
+        .tier-badge.admin {
+            background: rgba(249, 115, 22, 0.15);
+            color: var(--accent-orange);
+            border: 1px solid rgba(249, 115, 22, 0.3);
+            box-shadow: 0 0 10px rgba(249, 115, 22, 0.1);
+        }
+        /* Direct Passcode Login UI styling */
+        .direct-login-divider {
+            margin: 24px 0;
+            display: flex;
+            align-items: center;
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .direct-login-divider::before, .direct-login-divider::after {
+            content: '';
+            flex: 1;
+            border-bottom: 1px solid var(--card-border);
+        }
+        .direct-login-divider:not(:empty)::before {
+            margin-right: .8em;
+        }
+        .direct-login-divider:not(:empty)::after {
+            margin-left: .8em;
+        }
+        .login-input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-bottom: 10px;
+            text-align: left;
+        }
+        .login-input {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--card-border);
+            color: var(--text-primary);
+            padding: 12px 16px;
+            border-radius: 14px;
+            font-family: 'Outfit', sans-serif;
+            font-size: 14px;
+            outline: none;
+            transition: all 0.2s ease;
+            width: 100%;
+        }
+        .login-input:focus {
+            border-color: var(--accent-cyan);
+            box-shadow: 0 0 12px rgba(6, 182, 212, 0.15);
+            background: rgba(255, 255, 255, 0.05);
+        }
+        .btn-direct-login {
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
+            color: white;
+            padding: 12px;
+            border-radius: 14px;
+            font-weight: 600;
+            font-size: 15px;
+            border: none;
+            cursor: pointer;
+            width: 100%;
+            transition: all 0.2s ease;
+            margin-top: 6px;
+        }
+        .btn-direct-login:hover {
+            opacity: 0.95;
+            transform: translateY(-1px);
+        }
+        .login-error {
+            color: #f87171;
+            font-size: 13px;
+            margin-top: 10px;
+            text-align: center;
+            display: none;
+            line-height: 1.5;
+        }
     </style>
 
 
@@ -715,6 +840,15 @@
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 10px;"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
                 Launch Telegram Bot
             </a>
+
+            <div class="direct-login-divider">or log in directly</div>
+
+            <div class="login-input-group">
+                <input type="text" id="login-username" class="login-input" placeholder="Telegram User ID or Username">
+                <input type="password" id="login-passcode" class="login-input" placeholder="Access Passcode">
+                <button onclick="submitDirectLogin()" class="btn-direct-login">Log In</button>
+                <div id="login-error-msg" class="login-error"></div>
+            </div>
         </div>
     </div>
 
@@ -724,7 +858,7 @@
             <div class="user-profile">
                 <img src="/api/profile-photo" class="user-avatar" alt="Avatar">
                 <div>
-                    <h1>Hello, <span id="display-username">User</span> 👋</h1>
+                    <h1 style="display: flex; align-items: center; gap: 8px;">Hello, <span id="display-username">User</span> <span id="display-tier" class="tier-badge basic">Basic</span> 👋</h1>
                     <p>Timezone: <span id="display-timezone">Asia/Kolkata</span></p>
                 </div>
             </div>
@@ -738,7 +872,7 @@
         </header>
 
 
-        <!-- Main Dashboard Grid -->
+        <!-- Today's Overview Grid -->
         <div class="dashboard-grid">
             <!-- Today's Intake (Circular Progress Rings) -->
             <div class="glass-card accent-macros">
@@ -781,30 +915,13 @@
                         <div class="macro-box-title">Fat</div>
                         <div class="macro-box-val fat"><span id="today-fat">0</span>g</div>
                     </div>
-                    <div class="macro-box">
-                        <div class="macro-box-title">Weight</div>
+                    <div class="macro-box" style="cursor: pointer;" onclick="promptUpdateWeight()">
+                        <div class="macro-box-title" style="display: flex; align-items: center; justify-content: center; gap: 4px;">Weight ✏️</div>
                         <div class="macro-box-val weight"><span id="today-weight">--</span> kg</div>
                     </div>
                 </div>
             </div>
 
-            <!-- Historical Intake (7-day chart) -->
-            <div class="glass-card accent-history">
-                <div class="card-title">
-                    <span>Last 7 Days Consumption</span>
-                    <div class="chart-toggle-group">
-                        <button class="btn-toggle active" id="btn-chart-bar" onclick="setChartType('bar')">Bars</button>
-                        <button class="btn-toggle" id="btn-chart-line" onclick="setChartType('line')">Lines</button>
-                    </div>
-                </div>
-
-                <div class="chart-container">
-                    <canvas id="weeklyHistoryChart"></canvas>
-                </div>
-            </div>
-        </div>
-
-        <div class="dashboard-grid">
             <!-- Today vs Yesterday Comparison -->
             <div class="glass-card accent-comparison">
                 <div class="card-title">Macros Comparison</div>
@@ -854,6 +971,67 @@
                     </div>
                 </div>
             </div>
+        </div>
+
+        <!-- Historical Analytics Grid -->
+        <div class="dashboard-grid">
+            <!-- Historical Intake (Intake chart) -->
+            <div class="glass-card accent-history">
+                <div class="card-title">
+                    <span>Intake History</span>
+                    <div style="display: flex; gap: 12px; align-items: center;">
+                        <select id="timeframe-select" class="timeframe-select" onchange="changeTimeframe(this.value)">
+                            <option value="7">Last 7 Days</option>
+                        </select>
+                        <div class="chart-toggle-group">
+                            <button class="btn-toggle active" id="btn-chart-bar" onclick="setChartType('bar')">Bars</button>
+                            <button class="btn-toggle" id="btn-chart-line" onclick="setChartType('line')">Lines</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="chart-container">
+                    <canvas id="weeklyHistoryChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Weight Tracker Chart -->
+            <div class="glass-card accent-comparison">
+                <div class="card-title">
+                    <span>Weight Trend History</span>
+                </div>
+
+                <div class="chart-container">
+                    <canvas id="weightHistoryChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Action Items / Tracker List Grid -->
+        <div class="dashboard-grid">
+            <!-- Gym Workout & Consistency Tracker -->
+            <div class="glass-card accent-workout">
+                <div class="card-title">Gym Workout & Consistency Tracker</div>
+                <div class="workout-container">
+                    <div class="streak-badge-container" id="streak-container">
+                        <span class="flame-icon">🔥</span>
+                    </div>
+                    <div class="streak-details">
+                        <div class="streak-stat">
+                            <span class="streak-stat-label">Current Streak</span>
+                            <span class="streak-stat-value highlight" id="workout-streak-val">0 days</span>
+                        </div>
+                        <div class="streak-stat">
+                            <span class="streak-stat-label">Personal Best</span>
+                            <span class="streak-stat-value" id="workout-max-streak-val">0 days</span>
+                        </div>
+                    </div>
+                </div>
+                <button class="btn-workout-toggle inactive" id="btn-workout" onclick="toggleWorkoutToday()">
+                    <span id="workout-btn-icon">🏋️‍♂️</span>
+                    <span id="workout-btn-text">Mark Workout Done</span>
+                </button>
+            </div>
 
             <!-- Recent Logged Meals List -->
             <div class="glass-card accent-meals">
@@ -878,32 +1056,8 @@
             </div>
         </div>
 
-        <!-- Workout & Consistency Grid -->
-        <div class="dashboard-grid">
-            <!-- Workout Streak & Gym Tracker -->
-            <div class="glass-card accent-workout">
-                <div class="card-title">Gym Workout & Consistency Tracker</div>
-                <div class="workout-container">
-                    <div class="streak-badge-container" id="streak-container">
-                        <span class="flame-icon">🔥</span>
-                    </div>
-                    <div class="streak-details">
-                        <div class="streak-stat">
-                            <span class="streak-stat-label">Current Streak</span>
-                            <span class="streak-stat-value highlight" id="workout-streak-val">0 days</span>
-                        </div>
-                        <div class="streak-stat">
-                            <span class="streak-stat-label">Personal Best</span>
-                            <span class="streak-stat-value" id="workout-max-streak-val">0 days</span>
-                        </div>
-                    </div>
-                </div>
-                <button class="btn-workout-toggle inactive" id="btn-workout" onclick="toggleWorkoutToday()">
-                    <span id="workout-btn-icon">🏋️‍♂️</span>
-                    <span id="workout-btn-text">Mark Workout Done</span>
-                </button>
-            </div>
-
+        <!-- Motivation Row (Full Width) -->
+        <div class="dashboard-grid" style="grid-template-columns: 1fr;">
             <!-- Vision / Motivation Card -->
             <div class="glass-card accent-motivation" style="display: flex; flex-direction: column; justify-content: center; padding: 32px;">
                 <div class="card-title" style="margin-bottom: 16px;">Consistency is Key 🔑</div>
@@ -922,6 +1076,7 @@
         let todayWorkoutStatus = false;
         let currentChartType = 'bar';
         let weeklyHistoryData = null;
+        let currentDays = 7;
 
 
         // Check url parameters for magic login link token
@@ -936,9 +1091,9 @@
             loadDashboard();
         }
 
-        async function loadDashboard() {
+        async function loadDashboard(days = 7) {
             try {
-                const response = await fetch('/api/dashboard-data');
+                const response = await fetch(`/api/dashboard-data?days=${days}`);
                 if (response.status === 401) {
                     // Unauthorized, keep splash screen visible
                     document.getElementById('splash-screen').style.display = 'flex';
@@ -961,6 +1116,11 @@
                 // Display profile details
                 document.getElementById('display-username').innerText = data.username;
                 document.getElementById('display-timezone').innerText = data.timezone;
+
+                const tierEl = document.getElementById('display-tier');
+                const tier = data.user_tier || 'Basic';
+                tierEl.innerText = tier;
+                tierEl.className = `tier-badge ${tier.toLowerCase()}`;
 
                 // Configure Progress Rings
                 const calorieGoal = data.goals.calories || 2000;
@@ -1015,9 +1175,13 @@
                     });
                 }
 
-                // Render Chart
+                // Update timeframe selector dropdown options dynamically
+                updateTimeframeDropdown(data.max_available_days);
+
+                // Render Charts
                 weeklyHistoryData = data.weekly_history;
                 renderChart(weeklyHistoryData);
+                renderWeightChart(weeklyHistoryData);
 
 
                 // Update Workout Streak UI
@@ -1041,6 +1205,46 @@
             const percent = Math.min(100, Math.max(0, (value / goal) * 100));
             const offset = circumference - (percent / 100) * circumference;
             circle.style.strokeDashoffset = offset;
+        }
+
+        function updateTimeframeDropdown(maxDays) {
+            const select = document.getElementById('timeframe-select');
+            const currentValue = select.value;
+            
+            // Rebuild options dynamically based on available days in DB
+            select.innerHTML = '<option value="7">Last 7 Days</option>';
+            
+            if (maxDays >= 14) {
+                const opt = document.createElement('option');
+                opt.value = "14";
+                opt.innerText = "Last 2 Weeks";
+                select.appendChild(opt);
+            }
+            if (maxDays >= 21) {
+                const opt = document.createElement('option');
+                opt.value = "21";
+                opt.innerText = "Last 3 Weeks";
+                select.appendChild(opt);
+            }
+            if (maxDays >= 30) {
+                const opt = document.createElement('option');
+                opt.value = "30";
+                opt.innerText = "Last Month";
+                select.appendChild(opt);
+            }
+            
+            // Restore selection if valid
+            if (parseInt(currentValue) <= maxDays) {
+                select.value = currentValue;
+            } else {
+                select.value = "7";
+                currentDays = 7;
+            }
+        }
+
+        async function changeTimeframe(val) {
+            currentDays = parseInt(val);
+            await loadDashboard(currentDays);
         }
 
         function renderChart(history) {
@@ -1127,6 +1331,67 @@
             });
         }
 
+        function renderWeightChart(history) {
+            const ctx = document.getElementById('weightHistoryChart').getContext('2d');
+            
+            // Cleanup any existing chart instance to avoid rendering bugs
+            if (window.weightChart) {
+                window.weightChart.destroy();
+            }
+
+            const isLight = document.body.classList.contains('light-theme');
+            const textPrimary = isLight ? '#111827' : '#f3f4f6';
+            const textSecondary = isLight ? '#4b5563' : '#9ca3af';
+            const gridColor = isLight ? 'rgba(0, 0, 0, 0.05)' : 'rgba(255, 255, 255, 0.04)';
+
+            const datasets = [
+                {
+                    label: 'Weight (kg)',
+                    data: history.weights,
+                    backgroundColor: 'rgba(236, 72, 153, 0.08)',
+                    borderColor: '#ec4899',
+                    borderWidth: 2.5,
+                    fill: true,
+                    tension: 0.35,
+                    pointBackgroundColor: '#ec4899',
+                    pointRadius: 4,
+                    pointHoverRadius: 6,
+                    spanGaps: true
+                }
+            ];
+
+            window.weightChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: history.labels,
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            labels: {
+                                color: textPrimary,
+                                font: { family: 'Outfit', size: 12 }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: { display: false },
+                            ticks: { color: textSecondary, font: { family: 'Outfit' } }
+                        },
+                        y: {
+                            grid: { color: gridColor },
+                            ticks: { color: textSecondary, font: { family: 'Outfit' } },
+                            title: { display: true, text: 'Weight (kg)', color: '#ec4899', font: { family: 'Outfit', weight: 600 } }
+                        }
+                    }
+                }
+            });
+        }
+
 
         function setChartType(type) {
             if (currentChartType === type) return;
@@ -1151,6 +1416,7 @@
             // Re-render chart to update grid/text colors
             if (weeklyHistoryData) {
                 renderChart(weeklyHistoryData);
+                renderWeightChart(weeklyHistoryData);
             }
         }
 
@@ -1236,6 +1502,74 @@
             } catch (err) {
                 console.error(err);
                 alert('Error updating workout status. Please try again.');
+            }
+        }
+
+        async function submitDirectLogin() {
+            const usernameOrId = document.getElementById('login-username').value.trim();
+            const passcode = document.getElementById('login-passcode').value.trim();
+            const errorMsg = document.getElementById('login-error-msg');
+
+            if (!usernameOrId || !passcode) {
+                errorMsg.innerText = "Please enter both Username/ID and passcode.";
+                errorMsg.style.display = 'block';
+                return;
+            }
+
+            try {
+                errorMsg.style.display = 'none';
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        username_or_id: usernameOrId,
+                        passcode: passcode
+                    })
+                });
+
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || "Failed to log in");
+                }
+
+                window.location.reload();
+            } catch (err) {
+                errorMsg.innerText = err.message;
+                errorMsg.style.display = 'block';
+            }
+        }
+
+        async function promptUpdateWeight() {
+            const currentWeight = document.getElementById('today-weight').innerText;
+            const defaultVal = currentWeight !== '--' ? currentWeight : '70';
+            const weightVal = prompt("Enter today's weight in kg:", defaultVal);
+            if (weightVal === null) return;
+            
+            const parsedWeight = parseFloat(weightVal);
+            if (isNaN(parsedWeight) || parsedWeight <= 0) {
+                alert("Please enter a valid positive number for weight.");
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/weight', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ weight: parsedWeight })
+                });
+                
+                if (!response.ok) {
+                    throw new Error("Failed to update weight");
+                }
+                
+                await loadDashboard(currentDays);
+            } catch (err) {
+                console.error(err);
+                alert("Error updating weight. Please try again.");
             }
         }
     </script>
