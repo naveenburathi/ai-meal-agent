@@ -387,6 +387,56 @@ def get_today_logs(user_id: int) -> list[MealLog]:
     return get_daily_logs(user_id, days_offset=0)
 
 
+def get_frequent_meals(user_id: int, limit: int = 5) -> list[str]:
+    import re
+    from collections import defaultdict
+    with SessionLocal() as session:
+        stmt = (
+            select(MealLog.meal_text, MealLog.created_at)
+            .where(MealLog.telegram_user_id == user_id)
+            .order_by(MealLog.created_at.desc())
+        )
+        try:
+            results = session.execute(stmt).all()
+            if not results:
+                return []
+            
+            # Helper to normalize description
+            def get_norm(text: str) -> str:
+                t = text.lower().strip()
+                for sep in [" and ", " with ", " & ", " + ", "+"]:
+                    t = t.replace(sep, ", ")
+                t = re.sub(r"[^\w\s\d,]", "", t)
+                parts = []
+                for part in t.split(","):
+                    part_clean = part.strip()
+                    if not part_clean:
+                        continue
+                    words = part_clean.split()
+                    normalized_words = [FOOD_NAME_ALIASES.get(w, w) for w in words]
+                    parts.append(" ".join(normalized_words))
+                parts.sort()
+                return ", ".join(parts)
+
+            groups = {}
+            for r_text, r_created in results:
+                if not r_text:
+                    continue
+                norm = get_norm(r_text)
+                if norm not in groups:
+                    groups[norm] = [0, r_text, r_created]
+                groups[norm][0] += 1
+                if r_created > groups[norm][2]:
+                    groups[norm][1] = r_text
+                    groups[norm][2] = r_created
+
+            sorted_groups = sorted(groups.values(), key=lambda x: (x[0], x[2]), reverse=True)
+            return [item[1] for item in sorted_groups[:limit]]
+        except Exception as e:
+            logger.warning("Failed to query frequent meals: %s", e)
+            return []
+
+
 def format_daily_stats(
     logs: list[MealLog],
     calorie_goal: int | None = None,
@@ -1054,6 +1104,93 @@ async def delete_meal_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.edit_message_text(result_message)
 
 
+async def quick_log_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    frequent_meals = await asyncio.to_thread(get_frequent_meals, user_id, 5)
+
+    if not frequent_meals:
+        await update.message.reply_text(
+            "📋 You don't have any frequent meals logged yet!\n\n"
+            "Once you log some meals (by sending descriptions like '3 rotis, paneer sabzi'), "
+            "your top staples will appear here for one-click logging."
+        )
+        return
+
+    keyboard = []
+    for idx, meal in enumerate(frequent_meals):
+        btn_text = meal
+        if len(btn_text) > 30:
+            btn_text = btn_text[:27] + "..."
+        keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"ql:{idx}")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("Select a staple meal to quick log:", reply_markup=reply_markup)
+
+
+async def quick_log_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+    if not data.startswith("ql:"):
+        return
+
+    try:
+        index = int(data.split(":")[1])
+    except (ValueError, IndexError):
+        await query.edit_message_text("Invalid request.")
+        return
+
+    user_id = query.from_user.id
+
+    frequent_meals = await asyncio.to_thread(get_frequent_meals, user_id, 5)
+    if not frequent_meals or index >= len(frequent_meals):
+        await query.edit_message_text("Meal suggestion not found or no longer available.")
+        return
+
+    meal_text = frequent_meals[index]
+    await query.edit_message_text(f"Logging meal: *{meal_text}*...\nEstimating macros... ⏳", parse_mode="Markdown")
+
+    try:
+        estimate = await asyncio.to_thread(estimate_meal, meal_text)
+    except Exception as e:
+        logger.error("LLM estimation failed in quick log callback for '%s': %s", meal_text, e)
+        await query.edit_message_text(f"Failed to estimate macros for: '{meal_text}'. Please try again.")
+        return
+
+    if not estimate.foods or estimate.total_calories == 0:
+        await query.edit_message_text(f"Could not identify foods in: '{meal_text}'.")
+        return
+
+    class MockUser:
+        def __init__(self, uid, uname):
+            self.id = uid
+            self.username = uname
+            self.first_name = uname
+
+    username = query.from_user.username or query.from_user.first_name or "User"
+    mock_user = MockUser(user_id, username)
+    await asyncio.to_thread(save_meal_log, mock_user, meal_text, estimate)
+
+    cal_goal, prot_goal = await asyncio.to_thread(get_user_goals, user_id)
+    logs = await asyncio.to_thread(get_today_logs, user_id)
+    daily_calories = sum(log.calories for log in logs)
+    daily_protein = sum(log.protein for log in logs)
+
+    response_text = format_estimate(
+        estimate,
+        daily_total_calories=daily_calories,
+        daily_total_protein=daily_protein,
+        calorie_goal=cal_goal,
+        protein_goal=prot_goal
+    )
+    
+    await query.edit_message_text(
+        f"<b>Logged Staple:</b> {meal_text}\n\n" + response_text,
+        parse_mode="HTML"
+    )
+
+
 async def list_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     tz_name = await asyncio.to_thread(get_user_timezone_name, user_id)
@@ -1437,6 +1574,7 @@ async def post_init(application: Application) -> None:
             BotCommand("set_reminder", "Add/remove reminder time (HH:MM [off])"),
             BotCommand("timezone", "Set your local timezone"),
             BotCommand("set_passcode", "Set dashboard access passcode (passcode)"),
+            BotCommand("quick", "Quick log frequent meals"),
             BotCommand("help", "Show help instructions"),
         ]
         logger.info("Sending %d commands to Telegram's set_my_commands API...", len(commands))
@@ -1569,7 +1707,9 @@ async def main_async() -> None:
     app.add_handler(CommandHandler("set_reminder", set_reminder))
     app.add_handler(CommandHandler("timezone", set_timezone))
     app.add_handler(CommandHandler("set_passcode", set_passcode))
+    app.add_handler(CommandHandler("quick", quick_log_command))
     app.add_handler(CallbackQueryHandler(delete_meal_callback, pattern="^del_meal:"))
+    app.add_handler(CallbackQueryHandler(quick_log_callback, pattern="^ql:"))
     app.add_handler(CallbackQueryHandler(workout_poll_callback, pattern="^workout:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_meal))
 
@@ -1755,6 +1895,7 @@ async def main_async() -> None:
                 return s.user_tier if s else "Basic"
 
         user_tier = await asyncio.to_thread(get_user_tier, user_id)
+        frequent_meals = await asyncio.to_thread(get_frequent_meals, user_id, 5)
 
         user_tz = ZoneInfo(tz_name)
         today_date = datetime.now(user_tz).date()
@@ -1765,6 +1906,7 @@ async def main_async() -> None:
             "username": username,
             "timezone": tz_name,
             "user_tier": user_tier,
+            "frequent_meals": frequent_meals,
             "goals": {
                 "calories": cal_goal,
                 "protein": prot_goal
@@ -1902,6 +2044,58 @@ async def main_async() -> None:
         await asyncio.to_thread(save_or_update_weight, user_id, req.weight, tz_name)
 
         return JSONResponse(content={"status": "success", "weight": req.weight})
+
+    class MealLogRequest(BaseModel):
+        meal_text: str
+
+    @web_app.post("/api/meals")
+    async def add_meal_from_ui(req: MealLogRequest, session_token: str | None = Cookie(None)):
+        if not session_token:
+            return JSONResponse(content={"error": "Unauthorized"}, status_code=401)
+        user_id = await asyncio.to_thread(get_user_by_session_token, session_token)
+        if user_id is None:
+            return JSONResponse(content={"error": "Unauthorized"}, status_code=401)
+
+        meal_text = req.meal_text.strip()
+        if not meal_text:
+            return JSONResponse(content={"error": "Meal description cannot be empty"}, status_code=400)
+
+        def get_user_username():
+            with SessionLocal() as session:
+                last_log = session.scalars(
+                    select(MealLog)
+                    .where(MealLog.telegram_user_id == user_id)
+                    .order_by(MealLog.created_at.desc())
+                ).first()
+                return last_log.telegram_username if last_log else "User"
+
+        username = await asyncio.to_thread(get_user_username)
+
+        class MockUser:
+            def __init__(self, uid, uname):
+                self.id = uid
+                self.username = uname
+                self.first_name = uname
+
+        mock_user = MockUser(user_id, username)
+
+        try:
+            estimate = await asyncio.to_thread(estimate_meal, meal_text)
+        except Exception as e:
+            return JSONResponse(content={"error": f"Failed to estimate macros: {e}"}, status_code=500)
+
+        tz_name = await asyncio.to_thread(get_user_timezone_name, user_id)
+        user_tz = ZoneInfo(tz_name)
+        created_at_utc = datetime.now(user_tz).astimezone(timezone.utc)
+
+        await asyncio.to_thread(save_meal_log, mock_user, meal_text, estimate, created_at_utc)
+
+        return JSONResponse(content={"status": "success", "estimate": {
+            "calories": estimate.calories,
+            "protein": estimate.protein,
+            "carbs": estimate.carbs,
+            "fat": estimate.fat
+        }})
 
     @web_app.get("/api/profile-photo")
     async def profile_photo(session_token: str | None = Cookie(None)):
