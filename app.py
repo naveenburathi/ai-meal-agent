@@ -766,17 +766,8 @@ def schedule_workout_poll(job_queue, user_id: int, tz_name: str) -> None:
     current_jobs = job_queue.get_jobs_by_name(job_name)
     for job in current_jobs:
         job.schedule_removal()
-    try:
-        user_tz = ZoneInfo(tz_name)
-    except Exception:
-        user_tz = ZoneInfo("Asia/Kolkata")
-    poll_time = time(hour=23, minute=30, tzinfo=user_tz)
-    job_queue.run_daily(
-        callback=send_workout_poll_callback,
-        time=poll_time,
-        name=job_name,
-        data={"user_id": user_id}
-    )
+    # Disabled daily workout reminder messages per user request
+    return
 
 
 async def send_workout_poll_callback(context: ContextTypes.DEFAULT_TYPE) -> None:
