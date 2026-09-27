@@ -1100,6 +1100,28 @@
                                 <!-- Dynamic pills go here -->
                             </div>
                         </div>
+                        <div class="custom-presets-container" style="margin-top: 16px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                <div style="font-size: 13px; color: var(--text-secondary); font-weight: 500;">Saved Presets ⭐</div>
+                                <button onclick="toggleAddPresetForm()" style="background: none; border: none; color: var(--accent-cyan); font-size: 12px; cursor: pointer; font-weight: 500;">+ New Preset</button>
+                            </div>
+                            <div id="add-preset-form" style="display: none; background: var(--box-bg); padding: 12px; border-radius: 8px; border: 1px solid var(--card-border); margin-bottom: 10px;">
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+                                    <input type="text" id="preset-name" placeholder="Meal Name" style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--card-border); background: var(--bg-card); color: var(--text-primary); font-size: 12px;">
+                                    <input type="number" id="preset-cals" placeholder="Calories (kcal)" style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--card-border); background: var(--bg-card); color: var(--text-primary); font-size: 12px;">
+                                    <input type="number" id="preset-prot" placeholder="Protein (g)" style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--card-border); background: var(--bg-card); color: var(--text-primary); font-size: 12px;">
+                                    <input type="number" id="preset-carbs" placeholder="Carbs (g)" style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--card-border); background: var(--bg-card); color: var(--text-primary); font-size: 12px;">
+                                </div>
+                                <div style="display: flex; justify-content: flex-end; gap: 6px;">
+                                    <button onclick="toggleAddPresetForm()" style="padding: 4px 10px; border-radius: 6px; border: none; background: transparent; color: var(--text-secondary); font-size: 12px; cursor: pointer;">Cancel</button>
+                                    <button onclick="savePresetFromUI()" style="padding: 4px 12px; border-radius: 6px; border: none; background: var(--accent-cyan); color: #000; font-weight: 600; font-size: 12px; cursor: pointer;">Save</button>
+                                </div>
+                                <div id="preset-form-error" style="color: #ef4444; font-size: 11px; margin-top: 4px; display: none;"></div>
+                            </div>
+                            <div id="custom-preset-pills" style="display: flex; flex-wrap: wrap; gap: 8px;">
+                                <!-- Dynamic custom preset pills go here -->
+                            </div>
+                        </div>
                     </div>
                     <!-- Right: Table of Logged Meals -->
                     <div class="meals-table-section">
@@ -1266,6 +1288,52 @@
                     suggestionPills.innerHTML = '<div style="font-size: 13px; color: var(--text-secondary); font-style: italic;">No suggestions available yet. Log some meals!</div>';
                 }
 
+                // Update custom preset pills
+                const presetPills = document.getElementById('custom-preset-pills');
+                if (presetPills) {
+                    presetPills.innerHTML = '';
+                    if (data.custom_meals && data.custom_meals.length > 0) {
+                        data.custom_meals.forEach(cm => {
+                            const wrapper = document.createElement('div');
+                            wrapper.style.display = 'inline-flex';
+                            wrapper.style.alignItems = 'center';
+                            wrapper.style.gap = '4px';
+
+                            const pill = document.createElement('button');
+                            pill.className = 'suggestion-pill';
+                            pill.type = 'button';
+                            pill.style.borderColor = 'rgba(236, 72, 153, 0.4)';
+                            pill.innerText = `⭐ ${cm.name} (${cm.calories} kcal)`;
+                            pill.title = `${cm.name} (${cm.calories} kcal, ${cm.protein}g P, ${cm.carbs}g C, ${cm.fat}g F)`;
+                            pill.onclick = () => {
+                                document.getElementById('meal-input').value = cm.name;
+                            };
+
+                            const delBtn = document.createElement('button');
+                            delBtn.type = 'button';
+                            delBtn.innerText = '×';
+                            delBtn.title = 'Delete Preset';
+                            delBtn.style.background = 'none';
+                            delBtn.style.border = 'none';
+                            delBtn.style.color = '#ef4444';
+                            delBtn.style.cursor = 'pointer';
+                            delBtn.style.fontSize = '14px';
+                            delBtn.onclick = async (e) => {
+                                e.stopPropagation();
+                                if (confirm(`Delete preset '${cm.name}'?`)) {
+                                    await deletePresetFromUI(cm.id);
+                                }
+                            };
+
+                            wrapper.appendChild(pill);
+                            wrapper.appendChild(delBtn);
+                            presetPills.appendChild(wrapper);
+                        });
+                    } else {
+                        presetPills.innerHTML = '<div style="font-size: 13px; color: var(--text-secondary); font-style: italic;">No custom presets saved yet.</div>';
+                    }
+                }
+
                 // Render Charts
                 weeklyHistoryData = data.weekly_history;
                 weeklyHistoryData.calorieGoal = calorieGoal;
@@ -1317,6 +1385,61 @@
                 errorEl.style.display = 'block';
             } finally {
                 if (spinner) spinner.style.display = 'none';
+            }
+        }
+
+        function toggleAddPresetForm() {
+            const form = document.getElementById('add-preset-form');
+            if (form) {
+                form.style.display = form.style.display === 'none' ? 'block' : 'none';
+                document.getElementById('preset-form-error').style.display = 'none';
+            }
+        }
+
+        async function savePresetFromUI() {
+            const name = document.getElementById('preset-name').value.trim();
+            const cals = parseInt(document.getElementById('preset-cals').value) || 0;
+            const prot = parseInt(document.getElementById('preset-prot').value) || 0;
+            const carbs = parseInt(document.getElementById('preset-carbs').value) || 0;
+            const errorEl = document.getElementById('preset-form-error');
+
+            if (!name) {
+                errorEl.innerText = 'Please enter a preset name.';
+                errorEl.style.display = 'block';
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/custom-meals', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, calories: cals, protein: prot, carbs })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Failed to save preset');
+
+                document.getElementById('preset-name').value = '';
+                document.getElementById('preset-cals').value = '';
+                document.getElementById('preset-prot').value = '';
+                document.getElementById('preset-carbs').value = '';
+                toggleAddPresetForm();
+                await loadDashboard(currentDays);
+            } catch (err) {
+                errorEl.innerText = err.message;
+                errorEl.style.display = 'block';
+            }
+        }
+
+        async function deletePresetFromUI(presetId) {
+            try {
+                const res = await fetch(`/api/custom-meals/${presetId}`, { method: 'DELETE' });
+                if (!res.ok) {
+                    const data = await res.json();
+                    throw new Error(data.error || 'Failed to delete preset');
+                }
+                await loadDashboard(currentDays);
+            } catch (err) {
+                alert(err.message);
             }
         }
 

@@ -134,6 +134,19 @@ class WorkoutLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class CustomMeal(Base):
+    __tablename__ = "custom_meals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    name: Mapped[str] = mapped_column(String(150))
+    calories: Mapped[int] = mapped_column(Integer)
+    protein: Mapped[int] = mapped_column(Integer)
+    carbs: Mapped[int] = mapped_column(Integer, default=0)
+    fat: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///meals.db")
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 engine = create_engine(
@@ -193,6 +206,16 @@ def init_db() -> None:
     inspector = inspect(engine)
     columns = [col["name"] for col in inspector.get_columns("user_settings")]
     with engine.begin() as conn:
+        if "calorie_goal" not in columns:
+            try:
+                conn.execute(text("ALTER TABLE user_settings ADD COLUMN calorie_goal INTEGER"))
+            except Exception as e:
+                logger.warning("Failed to add calorie_goal column: %s", e)
+        if "protein_goal" not in columns:
+            try:
+                conn.execute(text("ALTER TABLE user_settings ADD COLUMN protein_goal INTEGER"))
+            except Exception as e:
+                logger.warning("Failed to add protein_goal column: %s", e)
         if "auth_token" not in columns:
             try:
                 conn.execute(text("ALTER TABLE user_settings ADD COLUMN auth_token VARCHAR(100)"))
@@ -435,6 +458,50 @@ def get_frequent_meals(user_id: int, limit: int = 5) -> list[str]:
         except Exception as e:
             logger.warning("Failed to query frequent meals: %s", e)
             return []
+
+
+def save_custom_meal(user_id: int, name: str, calories: int, protein: int, carbs: int = 0, fat: int = 0) -> CustomMeal:
+    custom_meal = CustomMeal(
+        telegram_user_id=user_id,
+        name=name.strip(),
+        calories=max(0, calories),
+        protein=max(0, protein),
+        carbs=max(0, carbs),
+        fat=max(0, fat),
+        created_at=datetime.now(timezone.utc)
+    )
+    with SessionLocal() as session:
+        session.add(custom_meal)
+        session.commit()
+        session.refresh(custom_meal)
+        return custom_meal
+
+
+def get_user_custom_meals(user_id: int) -> list[CustomMeal]:
+    with SessionLocal() as session:
+        return list(session.scalars(
+            select(CustomMeal)
+            .where(CustomMeal.telegram_user_id == user_id)
+            .order_by(CustomMeal.name.asc())
+        ).all())
+
+
+def get_custom_meal_by_id(user_id: int, custom_meal_id: int) -> CustomMeal | None:
+    with SessionLocal() as session:
+        meal = session.get(CustomMeal, custom_meal_id)
+        if meal and meal.telegram_user_id == user_id:
+            return meal
+        return None
+
+
+def delete_custom_meal_by_id(user_id: int, custom_meal_id: int) -> bool:
+    with SessionLocal() as session:
+        meal = session.get(CustomMeal, custom_meal_id)
+        if meal and meal.telegram_user_id == user_id:
+            session.delete(meal)
+            session.commit()
+            return True
+        return False
 
 
 def format_daily_stats(
@@ -1182,6 +1249,188 @@ async def quick_log_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
 
 
+async def save_custom_meal_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    args = context.args
+
+    if not args or len(args) < 3:
+        await update.message.reply_text(
+            "✍️ *Usage:* `/save_meal <name> <calories> <protein> [carbs] [fat]`\n\n"
+            "**Examples:**\n"
+            "• `/save_meal Whey Shake 200 30`\n"
+            "• `/save_meal Chicken Rice Bowl 550 45 40 12`",
+            parse_mode="Markdown"
+        )
+        return
+
+    num_args = []
+    name_tokens = list(args)
+
+    while name_tokens and name_tokens[-1].isdigit():
+        num_args.insert(0, int(name_tokens.pop()))
+
+    if len(num_args) < 2 or not name_tokens:
+        await update.message.reply_text(
+            "⚠️ Please specify at least the meal name, calories, and protein.\n"
+            "Example: `/save_meal Protein Oats 350 25`"
+        )
+        return
+
+    meal_name = " ".join(name_tokens).strip()
+    calories = num_args[0]
+    protein = num_args[1]
+    carbs = num_args[2] if len(num_args) > 2 else 0
+    fat = num_args[3] if len(num_args) > 3 else 0
+
+    custom_meal = await asyncio.to_thread(
+        save_custom_meal, user_id, meal_name, calories, protein, carbs, fat
+    )
+
+    await update.message.reply_text(
+        f"✅ *Saved Custom Meal Template!*\n\n"
+        f"🏷️ **Name:** `{custom_meal.name}`\n"
+        f"🔥 **Calories:** {custom_meal.calories} kcal\n"
+        f"💪 **Protein:** {custom_meal.protein}g\n"
+        f"🍞 **Carbs:** {custom_meal.carbs}g\n"
+        f"🥑 **Fat:** {custom_meal.fat}g\n\n"
+        f"Use `/my_meals` anytime to log it with one click!",
+        parse_mode="Markdown"
+    )
+
+
+async def my_meals_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    custom_meals = await asyncio.to_thread(get_user_custom_meals, user_id)
+
+    if not custom_meals:
+        await update.message.reply_text(
+            "⭐ You don't have any saved custom meals yet!\n\n"
+            "To save a custom meal template, use:\n"
+            "`/save_meal <name> <calories> <protein> [carbs] [fat]`\n\n"
+            "Example: `/save_meal Whey Shake 200 30`",
+            parse_mode="Markdown"
+        )
+        return
+
+    keyboard = []
+    for cm in custom_meals:
+        btn_text = f"⭐ {cm.name} ({cm.calories} kcal | {cm.protein}g P)"
+        if len(btn_text) > 40:
+            btn_text = btn_text[:37] + "..."
+        keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"cm:{cm.id}")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("Select a custom preset meal to log:", reply_markup=reply_markup)
+
+
+async def custom_meal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+    if not data.startswith("cm:"):
+        return
+
+    try:
+        custom_meal_id = int(data.split(":")[1])
+    except (ValueError, IndexError):
+        await query.edit_message_text("Invalid request.")
+        return
+
+    user_id = query.from_user.id
+    custom_meal = await asyncio.to_thread(get_custom_meal_by_id, user_id, custom_meal_id)
+
+    if not custom_meal:
+        await query.edit_message_text("Custom meal template not found or deleted.")
+        return
+
+    estimated_food = EstimatedFood(
+        name=custom_meal.name,
+        quantity="1 serving",
+        calories=custom_meal.calories,
+        protein=custom_meal.protein,
+        carbs=custom_meal.carbs,
+        fat=custom_meal.fat
+    )
+    estimate = MealEstimate(
+        foods=[estimated_food],
+        total_calories=custom_meal.calories,
+        total_protein=custom_meal.protein,
+        total_carbs=custom_meal.carbs,
+        total_fat=custom_meal.fat
+    )
+
+    class MockUser:
+        def __init__(self, uid, uname):
+            self.id = uid
+            self.username = uname
+            self.first_name = uname
+
+    username = query.from_user.username or query.from_user.first_name or "User"
+    mock_user = MockUser(user_id, username)
+    await asyncio.to_thread(save_meal_log, mock_user, custom_meal.name, estimate)
+
+    cal_goal, prot_goal = await asyncio.to_thread(get_user_goals, user_id)
+    logs = await asyncio.to_thread(get_today_logs, user_id)
+    daily_calories = sum(log.calories for log in logs)
+    daily_protein = sum(log.protein for log in logs)
+
+    response_text = format_estimate(
+        estimate,
+        daily_total_calories=daily_calories,
+        daily_total_protein=daily_protein,
+        calorie_goal=cal_goal,
+        protein_goal=prot_goal
+    )
+
+    await query.edit_message_text(
+        f"<b>Logged Custom Preset:</b> {custom_meal.name}\n\n" + response_text,
+        parse_mode="HTML"
+    )
+
+
+async def delete_custom_meal_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    custom_meals = await asyncio.to_thread(get_user_custom_meals, user_id)
+
+    if not custom_meals:
+        await update.message.reply_text("You don't have any custom saved meals to delete.")
+        return
+
+    keyboard = []
+    for cm in custom_meals:
+        btn_text = f"❌ {cm.name}"
+        if len(btn_text) > 30:
+            btn_text = btn_text[:27] + "..."
+        keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"del_cm:{cm.id}")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("Select a custom meal template to delete:", reply_markup=reply_markup)
+
+
+async def delete_custom_meal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+    if not data.startswith("del_cm:"):
+        return
+
+    try:
+        custom_meal_id = int(data.split(":")[1])
+    except (ValueError, IndexError):
+        await query.edit_message_text("Invalid request.")
+        return
+
+    user_id = query.from_user.id
+    success = await asyncio.to_thread(delete_custom_meal_by_id, user_id, custom_meal_id)
+
+    if success:
+        await query.edit_message_text("✅ Custom meal template deleted.")
+    else:
+        await query.edit_message_text("Custom meal template not found or unauthorized.")
+
+
 async def list_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     tz_name = await asyncio.to_thread(get_user_timezone_name, user_id)
@@ -1566,6 +1815,9 @@ async def post_init(application: Application) -> None:
             BotCommand("timezone", "Set your local timezone"),
             BotCommand("set_passcode", "Set dashboard access passcode (passcode)"),
             BotCommand("quick", "Quick log frequent meals"),
+            BotCommand("save_meal", "Save custom meal template (name cal prot [carbs] [fat])"),
+            BotCommand("my_meals", "List and log your saved custom meals"),
+            BotCommand("delete_custom_meal", "Delete a saved custom meal template"),
             BotCommand("help", "Show help instructions"),
         ]
         logger.info("Sending %d commands to Telegram's set_my_commands API...", len(commands))
@@ -1699,8 +1951,13 @@ async def main_async() -> None:
     app.add_handler(CommandHandler("timezone", set_timezone))
     app.add_handler(CommandHandler("set_passcode", set_passcode))
     app.add_handler(CommandHandler("quick", quick_log_command))
+    app.add_handler(CommandHandler("save_meal", save_custom_meal_command))
+    app.add_handler(CommandHandler("my_meals", my_meals_command))
+    app.add_handler(CommandHandler("delete_custom_meal", delete_custom_meal_command))
     app.add_handler(CallbackQueryHandler(delete_meal_callback, pattern="^del_meal:"))
     app.add_handler(CallbackQueryHandler(quick_log_callback, pattern="^ql:"))
+    app.add_handler(CallbackQueryHandler(custom_meal_callback, pattern="^cm:"))
+    app.add_handler(CallbackQueryHandler(delete_custom_meal_callback, pattern="^del_cm:"))
     app.add_handler(CallbackQueryHandler(workout_poll_callback, pattern="^workout:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_meal))
 
@@ -1887,6 +2144,7 @@ async def main_async() -> None:
 
         user_tier = await asyncio.to_thread(get_user_tier, user_id)
         frequent_meals = await asyncio.to_thread(get_frequent_meals, user_id, 5)
+        user_custom_meals = await asyncio.to_thread(get_user_custom_meals, user_id)
 
         user_tz = ZoneInfo(tz_name)
         today_date = datetime.now(user_tz).date()
@@ -1898,6 +2156,17 @@ async def main_async() -> None:
             "timezone": tz_name,
             "user_tier": user_tier,
             "frequent_meals": frequent_meals,
+            "custom_meals": [
+                {
+                    "id": cm.id,
+                    "name": cm.name,
+                    "calories": cm.calories,
+                    "protein": cm.protein,
+                    "carbs": cm.carbs,
+                    "fat": cm.fat
+                }
+                for cm in user_custom_meals
+            ],
             "goals": {
                 "calories": cal_goal,
                 "protein": prot_goal
@@ -1929,6 +2198,53 @@ async def main_async() -> None:
             "workout_streak": workout_streak,
             "workout_max_streak": workout_max_streak
         })
+
+    class CustomMealCreateRequest(BaseModel):
+        name: str
+        calories: int
+        protein: int
+        carbs: int = 0
+        fat: int = 0
+
+    @web_app.post("/api/custom-meals")
+    async def create_custom_meal(req: CustomMealCreateRequest, session_token: str | None = Cookie(None)):
+        if not session_token:
+            return JSONResponse(content={"error": "Unauthorized"}, status_code=401)
+        user_id = await asyncio.to_thread(get_user_by_session_token, session_token)
+        if user_id is None:
+            return JSONResponse(content={"error": "Unauthorized"}, status_code=401)
+
+        if not req.name.strip():
+            return JSONResponse(content={"error": "Meal name cannot be empty"}, status_code=400)
+
+        custom_meal = await asyncio.to_thread(
+            save_custom_meal, user_id, req.name, req.calories, req.protein, req.carbs, req.fat
+        )
+        return JSONResponse(content={
+            "status": "success",
+            "custom_meal": {
+                "id": custom_meal.id,
+                "name": custom_meal.name,
+                "calories": custom_meal.calories,
+                "protein": custom_meal.protein,
+                "carbs": custom_meal.carbs,
+                "fat": custom_meal.fat
+            }
+        })
+
+    @web_app.delete("/api/custom-meals/{custom_meal_id}")
+    async def remove_custom_meal(custom_meal_id: int, session_token: str | None = Cookie(None)):
+        if not session_token:
+            return JSONResponse(content={"error": "Unauthorized"}, status_code=401)
+        user_id = await asyncio.to_thread(get_user_by_session_token, session_token)
+        if user_id is None:
+            return JSONResponse(content={"error": "Unauthorized"}, status_code=401)
+
+        success = await asyncio.to_thread(delete_custom_meal_by_id, user_id, custom_meal_id)
+        if not success:
+            return JSONResponse(content={"error": "Custom meal template not found"}, status_code=404)
+
+        return JSONResponse(content={"status": "success"})
 
     class WorkoutUpdateRequest(BaseModel):
         date: str
