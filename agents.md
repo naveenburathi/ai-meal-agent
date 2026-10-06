@@ -79,12 +79,17 @@ The application registers the following core Telegram bot commands:
 - `/today`: Show today's macro stats, calorie consumption, and progress against goals.
 - `/yesterday <meal_description>`: Estimate and log calories/protein for the previous calendar day.
 - `/yesterday_summary`: Show yesterday's macro stats, calorie consumption, and progress against goals.
+- `/quick`: Quick log top frequent staple meals via interactive inline buttons.
+- `/save_meal <name> <calories> <protein> [carbs] [fat]`: Save a custom meal template.
+- `/my_meals`: List and log saved custom preset meals via inline buttons.
+- `/delete_custom_meal`: Delete a saved custom meal template.
+- `/delete_meal`: Interactive meal deletion via inline keyboard buttons for meals logged on the same day.
 - `/dashboard`: Generates a secure login link to the Web UI dashboard.
 - `/set_goal <calories> <protein>`: Configure daily calorie and protein targets (or `/set_goal off` to clear).
 - `/track_weight <weight_in_kg>`: Log or update weight for the current day.
-- `/delete_meal`: Interactive meal deletion via inline keyboard buttons for meals logged on the same day.
 - `/reminders` & `/set_reminder <HH:MM>`: View and configure daily meal logging reminders.
 - `/timezone <timezone_name>`: Set the user's local timezone (e.g. `Asia/Kolkata`) for bounds calculations.
+- `/set_passcode <passcode>`: Set dashboard access passcode.
 
 ---
 
@@ -120,6 +125,11 @@ python app.py
 ---
 
 ## 📝 Guidelines for Future Modifications
+- **Mandatory Command Registration Rules**: Whenever adding a NEW bot command to `app.py`:
+  1. Register the command handler in `main_async` (`app.add_handler(CommandHandler("command_name", handler))`).
+  2. Add `BotCommand("command_name", "Description")` to the `commands` list in `post_init` so Telegram provides `/` auto-complete suggestions to users.
+  3. Include the command usage and description in the `/help` and `/start` message text inside `start()` in `app.py`.
+  4. Document the new command in `agents.md` under `Bot Commands & Handlers`.
 - **Structured Schema**: Always enforce structured outputs. When adding fields, ensure to update the corresponding Pydantic models (`EstimatedFood` or `MealEstimate`) and check that JSON schemas are generated correctly.
 - **Urllib Dependency**: Keep HTTP requests using the standard Python library `urllib` to minimize third-party library bloat.
 - **Extend Calibration**: If users report inaccurate estimations for specific common foods, add them to `CALIBRATED_FOODS` and matching plural forms to `FOOD_NAME_ALIASES`.
